@@ -78,6 +78,10 @@ func _run() -> void:
 	ok(look != null and look.env != null and look.sun != null, "the scene has a look, an environment and a sun")
 	ok(main.reflect != null and main.sea_mi != null and main.seabed_mi != null and main.rocks_mi != null, "the sea, its floor, the rocks and the reflection exist")
 	ok(main.rocks_mi.mesh != null and main.rocks_mi.mesh.get_surface_count() == 1, "the castle's rock skirt is on screen")
+	ok(main.life != null and main.life.gulls.size() == CSLife.GULLS and main.life.boat != null, "gulls and a boat sail round the castle")
+	ok(main.life.smoke_nodes.size() >= 1, "the castle starter's chimneys smoke (%d)" % main.life.smoke_nodes.size())
+	var islands := root.get_tree().get_nodes_in_group("far_island").size()
+	ok(islands >= 3, "far islands stand on the horizon (%d)" % islands)
 	for lid: String in CSLook.LOOK_IDS:
 		look.look_id = lid
 		for qid: String in CSLook.QUALITY_IDS:

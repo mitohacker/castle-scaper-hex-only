@@ -12,6 +12,7 @@ var main_cam: Camera3D
 var sea_mat: ShaderMaterial
 var scale := 0.5
 var on := true
+var _tick := 0
 
 
 func setup(p_main_cam: Camera3D, p_sea_mat: ShaderMaterial, p_world_env: Environment) -> void:
@@ -23,7 +24,7 @@ func setup(p_main_cam: Camera3D, p_sea_mat: ShaderMaterial, p_world_env: Environ
 	vp.size = Vector2i(960, 540)
 	vp.msaa_3d = Viewport.MSAA_DISABLED
 	vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED
-	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	vp.gui_disable_input = true
 	vp.handle_input_locally = false
 	add_child(vp)
@@ -48,7 +49,7 @@ func setup(p_main_cam: Camera3D, p_sea_mat: ShaderMaterial, p_world_env: Environ
 func configure(p_scale: float, p_env: Environment) -> void:
 	on = p_scale > 0.01
 	scale = clampf(p_scale, 0.25, 1.0)
-	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS if on else SubViewport.UPDATE_DISABLED
+	vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	env.ambient_light_color = p_env.ambient_light_color
 	env.ambient_light_sky_contribution = p_env.ambient_light_sky_contribution
 	env.ambient_light_energy = p_env.ambient_light_energy
@@ -72,3 +73,7 @@ func _process(_delta: float) -> void:
 	if absf(dir.y) > 0.999:
 		dir = (dir + Vector3(0.001, 0.0, 0.0)).normalized()
 	cam.look_at_from_position(from, from + dir, Vector3.UP)
+	# every other frame is enough: the water moves the picture anyway
+	_tick += 1
+	if _tick % 2 == 0:
+		vp.render_target_update_mode = SubViewport.UPDATE_ONCE

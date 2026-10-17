@@ -18,9 +18,9 @@ const EPS := 0.005              # boxes that overlap by less than this are apart
 const EMBED := 0.12             # how far a wall prop's mesh reaches behind its mount plane
 const CELL := 2.0               # spatial hash cell (m)
 
-enum { FRAME, SHUTTERS, FLOWERS, SHIELD, BANNER, TORCH, CHIMNEY, HOARDING, CORBELS, CRATES, BARRELS, BUNTING }
+enum { FRAME, SHUTTERS, FLOWERS, SHIELD, BANNER, TORCH, CHIMNEY, HOARDING, CORBELS, CRATES, BARRELS, BUNTING, STRING, IVY }
 const KINDS := ["frame", "shutters", "flowers", "shield", "banner", "torch", "chimney", "hoarding", "corbels", "crates",
-	"barrels", "bunting"]
+	"barrels", "bunting", "string", "ivy"]
 
 # meshes (one MultiMesh each)
 const M_FRAME := 0
@@ -39,7 +39,9 @@ const M_BARREL := 12
 const M_ROPE := 13
 const M_FLAG := 14
 const M_HOOK := 15
-const MESH_COUNT := 16
+const M_STRING := 16            # a moulded string course, 1 m long (scaled to the wall)
+const M_IVY := 17               # a patch of ivy 1 m wide, 1 m high (scaled to the wall)
+const MESH_COUNT := 18
 
 # paint zones (COLOR.r * 255), read by shaders/cs_props.gdshader
 const P_OWN := 0                # the block's colour (instance custom x)
@@ -190,6 +192,7 @@ func build(cb: CSBuild) -> void:
 	_walks()
 	_courts()
 	_bunting()
+	_ornaments()
 	var t1 := Time.get_ticks_usec()
 	_solve()
 	var t2 := Time.get_ticks_usec()
@@ -699,6 +702,44 @@ func _courts() -> void:
 				_court_cand(BARRELS, u, w, slot, g, barrels)
 
 
+func _ornaments() -> void:
+	## A moulded string course below the parapet line of a level and patches of ivy climbing the lower walls: both on open
+	## flat sides, dropped by the solver wherever a window, a hoarding, a lantern or anything dearer is in the way.
+	for v: int in town.columns():
+		if not grid.buildable(v):
+			continue
+		for k in range(0, town.top(v) + 1):
+			if not town.has(v, k) or b.is_round(v, k):
+				continue
+			var wall := town.colour(v, k)
+			var y0 := CSBuild.level_y_static(k)
+			var y1 := CSBuild.level_y_static(k + 1)
+			for sd: Array in _sides(v, k):
+				var i: int = sd[0]
+				var len: float = sd[3]
+				if len < 1.8:
+					continue
+				var mid: Vector2 = sd[1]
+				var bas := wall_basis(sd[2])
+				var slot := v * 16 + i
+				if CSBuild.h01(slot, k, 91) < 0.7:
+					var w := len - 0.35
+					var o := Vector3(mid.x, y1 - 0.62, mid.y)
+					var sc := _cand(STRING, 6.0, CSBuild.h01(slot, k, 92), v, CSTown.key(v, k))
+					sc.boxes = [box(o, bas, Vector3(-w * 0.5, 0.0, 0.0), Vector3(w * 0.5, 0.12, 0.1))]
+					sc.inst = [[M_STRING, Transform3D(Basis(bas.x * w, bas.y, bas.z), o), wall, wall]]
+				if CSBuild.h01(slot, k, 93) < (0.34 if k <= 1 else 0.12):
+					var iw := minf(len - 0.7, 1.6 + 1.4 * CSBuild.h01(slot, k, 94))
+					if iw < 1.0:
+						continue
+					var ih := 2.0 + 1.6 * CSBuild.h01(slot, k, 95)
+					var dx := (len - 0.7 - iw) * (CSBuild.h01(slot, k, 96) - 0.5)
+					var o2 := Vector3(mid.x, y0 + 0.2, mid.y) + bas.x * dx
+					var iv := _cand(IVY, 8.0, CSBuild.h01(slot, k, 97), v, CSTown.key(v, k))
+					iv.boxes = [box(o2, bas, Vector3(-iw * 0.5, 0.0, 0.0), Vector3(iw * 0.5, ih, 0.14))]
+					iv.inst = [[M_IVY, Transform3D(Basis(bas.x * iw, bas.y * ih, bas.z), o2), wall, wall]]
+
+
 func _bunting() -> void:
 	## A string of little flags between two blocks facing each other across a gap at the same level, the flags in
 	## the two blocks' colours by turns. From some open sides a ray looks for the first block straight ahead.
@@ -1137,6 +1178,38 @@ static func make_meshes() -> Array:
 				mb.box(Vector3(-0.49, 1.25, -EMBED), Vector3(0.49, 1.38, 0.09), P_LIGHT)
 				mb.box(Vector3(-0.07, 1.24, -EMBED), Vector3(0.07, 1.44, 0.11), P_LIGHT)
 				mb.box(Vector3(-0.51, -0.13, -EMBED), Vector3(0.51, 0.0, 0.15), P_LIGHT)
+				# a leaded pane set back in the opening, a mullion and a transom, a drip under the sill
+				mb.box(Vector3(-0.34, 0.0, -0.1), Vector3(0.34, 1.25, -0.08), P_DARK)
+				mb.box(Vector3(-0.025, 0.0, -0.1), Vector3(0.025, 1.25, 0.02), P_LIGHT)
+				mb.box(Vector3(-0.34, 0.62, -0.1), Vector3(0.34, 0.67, 0.02), P_LIGHT)
+				mb.box(Vector3(-0.48, -0.17, -EMBED), Vector3(0.48, -0.13, 0.1), P_LIGHT)
+			M_STRING:
+				mb.extrude_x([Vector2(-EMBED, 0.0), Vector2(0.1, 0.0), Vector2(0.1, 0.05), Vector2(0.06, 0.09), Vector2(0.03, 0.12), Vector2(-EMBED, 0.12)], -0.5, 0.5, P_LIGHT)
+			M_IVY:
+				var rng := RandomNumberGenerator.new()
+				rng.seed = 7731
+				# vines up the wall, then leaves, thicker low down, each a two-sided diamond turned a random way
+				for vn in 7:
+					var x0 := rng.randf_range(-0.42, 0.42)
+					var xs := x0
+					var yy := 0.0
+					while yy < rng.randf_range(0.55, 1.0):
+						var xn := clampf(xs + rng.randf_range(-0.07, 0.07), -0.5, 0.5)
+						mb.beam(Vector3(xs, yy, 0.02), Vector3(xn, yy + 0.1, 0.02), 0.012, P_DARKWOOD)
+						xs = xn
+						yy += 0.1
+				for j in 150:
+					var yv := pow(rng.randf(), 1.6)
+					var xv := rng.randf_range(-0.5, 0.5) * (1.0 - 0.3 * yv)
+					var c := Vector3(xv, yv, 0.03 + 0.05 * rng.randf())
+					var ang := rng.randf() * TAU
+					var sz := rng.randf_range(0.03, 0.055)
+					var a := Vector3(cos(ang), sin(ang), 0.0)
+					var bb := Vector3(-a.y, a.x, 0.35 * (rng.randf() - 0.5))
+					var leaf := [c + a * sz * 1.5, c + bb * sz, c - a * sz, c - bb * sz]
+					mb.zone = P_LEAF
+					mb.poly(leaf, c + Vector3(0.0, 0.0, -1.0))
+					mb.poly(leaf, c + Vector3(0.0, 0.0, 1.0))
 			M_SHUTTER:
 				mb.box(Vector3(-0.17, 0.0, -0.01), Vector3(0.17, 1.25, 0.04), P_SECOND_PLANKS)
 				mb.box(Vector3(-0.15, 0.2, 0.04), Vector3(0.15, 0.27, 0.05), P_SECOND_PLANKS)

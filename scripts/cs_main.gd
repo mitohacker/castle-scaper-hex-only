@@ -24,6 +24,7 @@ var seabed_mi: MeshInstance3D
 var rocks_mi: MeshInstance3D
 var look: CSLook
 var reflect: CSReflect
+var life: CSLife
 var grid_mi: MeshInstance3D
 var grid_mat: ShaderMaterial
 var ghost_mi: MeshInstance3D
@@ -107,6 +108,9 @@ func _ready() -> void:
 	ghost_mi.layers = 2
 	add_child(ghost_mi)
 	_make_props()
+	life = CSLife.new()
+	life.name = "Life"
+	add_child(life)
 	if not args.has("nobirds"):
 		birds = CFBirds.new()
 		birds.name = "Birds"
@@ -206,9 +210,7 @@ func _make_camera() -> void:
 func _make_sea() -> void:
 	sea_mi = MeshInstance3D.new()
 	sea_mi.name = "Sea"
-	var pm := PlaneMesh.new()
-	pm.size = Vector2(6000, 6000)
-	sea_mi.mesh = pm
+	sea_mi.mesh = CSRocks.sea_mesh()
 	var sm := ShaderMaterial.new()
 	sm.shader = load("res://shaders/cs_sea.gdshader")
 	sea_mi.material_override = sm
@@ -225,6 +227,19 @@ func _make_sea() -> void:
 	seabed_mi.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
 	seabed_mi.layers = 2
 	add_child(seabed_mi)
+	# far islands on the horizon (they stand in the haze; the water's shallow-edge foam rings them by itself)
+	var ism := ShaderMaterial.new()
+	ism.shader = load("res://shaders/cs_island.gdshader")
+	for isl: Array in [[-1250.0, -900.0, 11, 260.0, 120.0], [1500.0, -1500.0, 23, 380.0, 170.0], [-300.0, 1700.0, 37, 210.0, 80.0], [1800.0, 700.0, 51, 150.0, 55.0]]:
+		var imi := MeshInstance3D.new()
+		imi.name = "FarIsland"
+		imi.add_to_group("far_island")
+		imi.mesh = CSRocks.island_mesh(int(isl[2]), float(isl[3]), float(isl[4]))
+		imi.material_override = ism
+		imi.position = Vector3(float(isl[0]), 0.0, float(isl[1]))
+		imi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		imi.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+		add_child(imi)
 	rocks_mi = MeshInstance3D.new()
 	rocks_mi.name = "Rocks"
 	var rm := ShaderMaterial.new()
@@ -345,6 +360,7 @@ func add_block(v: int, k: int) -> bool:
 	pop_id = float(v + 1)
 	pop_t0 = time_alive
 	pop_pending = async_build
+	_puff(v, k)
 	_scare(v, k)
 	mark_changed()
 	return true
@@ -356,9 +372,32 @@ func remove_block(v: int, k: int) -> bool:
 	push_history()
 	town.remove(v, k)
 	unpop[CSTown.key(v, k)] = true
+	_puff(v, k)
 	_scare(v, k)
 	mark_changed()
 	return true
+
+
+func _puff(v: int, k: int) -> void:
+	if life == null or shot_path != "":
+		return
+	var p := grid.verts[v]
+	var on_water := k == 0
+	life.puff(Vector3(p.x, 0.2 if on_water else CSBuild.level_y_static(k) + 1.0, p.y), on_water)
+
+
+func _chimney_tops() -> Array:
+	var out := []
+	if props == null:
+		return out
+	for c: CSProps.Cand in props.kept:
+		if c.kind != CSProps.CHIMNEY:
+			continue
+		for it: Array in c.inst:
+			if int(it[0]) == CSProps.M_CHIMNEY:
+				var tf: Transform3D = it[1]
+				out.append(tf.origin + tf.basis.y * 1.05)
+	return out
 
 
 func _scare(v: int, k: int) -> void:
@@ -507,6 +546,8 @@ func _apply(b: CSBuild, res: Dictionary, gone: Dictionary = {}) -> void:
 		leaving = true
 		leave_t0 = time_alive
 	props = res.props
+	if life != null:
+		life.set_chimneys(_chimney_tops())
 	var pm: Array = res.prop_mm
 	for i in prop_mi.size():
 		(prop_mi[i] as MultiMeshInstance3D).multimesh = pm[i]

@@ -18,9 +18,9 @@ void vertex() {
 float height(vec3 p) {
 	// bedded strata cut by cracks, over a lumpy base
 	float lump = fbm3(p * 0.9) * 0.7 + fbm3(p * 3.3) * 0.3;
-	float strata = abs(sin(p.y * 7.0 + fbm3(p * 0.5) * 6.0)) * 0.15;
+	float strata = abs(sin(p.y * 7.0 + fbm3(p * 0.5) * 6.0)) * 0.08;
 	float crack = smoothstep(0.0, 0.06, abs(fbm3(p * 1.7 + 11.0) - 0.5));
-	return lump + strata * 0.6 + (1.0 - crack) * -0.25;
+	return lump + strata * 0.6 + (1.0 - crack) * -0.1;
 }
 
 void fragment() {

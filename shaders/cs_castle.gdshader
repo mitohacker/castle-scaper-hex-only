@@ -25,6 +25,40 @@ varying flat float v_owner;
 varying vec3 v_wpos;
 varying vec3 v_wnrm;
 
+// distance to the nearest joint of the course pattern, for the parallax search
+float joint_dist(vec2 uv, float sd, int pat, float scale) {
+	float dj;
+	float tone;
+	vec2 slope;
+	float bid;
+	if (pat == 2) {
+		brick(uv, sd, dj, tone, slope, bid);
+	} else {
+		ashlar(uv, sd, scale, 1.1, dj, tone, slope, bid);
+	}
+	return dj;
+}
+
+// steep parallax: the joints are recessed 3 cm; walk the view ray down into them
+vec2 parallax_uv(vec2 uv, vec3 vt, float sd, int pat, float scale, float seam_w) {
+	const int N = 8;
+	float depth_m = 0.03;
+	vec2 delta = (vt.xy / max(vt.z, 0.15)) * depth_m / float(N);
+	vec2 cur = uv;
+	float layer = 0.0;
+	float step_d = 1.0 / float(N);
+	float hd = 1.0 - smoothstep(0.0, seam_w * 1.4, joint_dist(cur, sd, pat, scale));
+	for (int i = 0; i < N; i++) {
+		if (layer >= hd) {
+			break;
+		}
+		cur -= delta;
+		layer += step_d;
+		hd = 1.0 - smoothstep(0.0, seam_w * 1.4, joint_dist(cur, sd, pat, scale));
+	}
+	return cur;
+}
+
 void vertex() {
 	v_col = COLOR;
 	v_c0 = CUSTOM0;
@@ -113,6 +147,13 @@ void fragment() {
 		} else {
 			base = lin(W_COL[ci]);
 			joint_col = mix(base * 0.8, lin(vec3(0.6, 0.57, 0.5)), 0.5);
+			float pom = 1.0 - smoothstep(0.008, 0.03, fw);
+			if (pom > 0.01 && (pat == 0 || pat == 2)) {
+				vec3 vt = vec3(dot(VIEW, TANGENT), dot(VIEW, BINORMAL), dot(VIEW, NORMAL));
+				float sc = (flg & 16) != 0 ? 1.1 : 0.62;
+				float sw = pat == 2 ? 0.006 : 0.012;
+				uv = mix(uv, parallax_uv(uv, vt, sd, pat, sc, sw), pom);
+			}
 			if (pat == 0) {
 				ashlar(uv, sd, (flg & 16) != 0 ? 1.1 : 0.62, 1.1, dj, tone, slope, bid);
 			} else if (pat == 2) {
@@ -147,7 +188,7 @@ void fragment() {
 			vec2 csl;
 			float cid;
 			rubble(uv * 1.05 + sd, sd, cdj, ctn, csl, cid);
-			float cracked = step(0.62, h21(vec2(cid * 19.0, sd)));
+			float cracked = step(0.7, h21(vec2(cid * 19.0, sd))) * smoothstep(0.42, 0.58, vn2(uv * 3.1 + sd));
 			float crack = (1.0 - smoothstep(0.004, 0.004 + fw * 1.5, cdj / 1.05)) * cracked * (0.5 + 0.5 * vn2(uv * 7.0));
 			b *= 1.0 - 0.45 * crack * (1.0 - lod);
 			float chip_n = fbm3(P * vec3(1.4, 2.0, 1.4) + sd) + 0.08 * vn2(uv * 9.0);
@@ -274,9 +315,9 @@ void fragment() {
 		float col = floor(x);
 		float lx = fract(x);
 		float tone = h21(vec2(col, row) + v_col.g);
-		vec3 hot = lin(vec3(0.66, 0.3, 0.17));
-		vec3 cool = lin(vec3(0.45, 0.2, 0.13));
-		vec3 base = mix(cool, hot, tone) * (0.85 + 0.3 * n_mid);
+		vec3 hot = lin(vec3(0.58, 0.30, 0.2));
+		vec3 cool = lin(vec3(0.4, 0.22, 0.17));
+		vec3 base = mix(cool, hot, tone) * (0.92 + 0.14 * n_mid);
 		float barrel = sin(lx * 3.14159);
 		base *= mix(1.0, 0.55 + 0.55 * barrel, 1.0 - lod * 0.7);
 		base *= mix(1.0, 0.6 + 0.4 * smoothstep(0.0, 0.22, ly), 1.0 - lod * 0.7);

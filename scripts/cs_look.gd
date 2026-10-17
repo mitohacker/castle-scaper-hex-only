@@ -11,8 +11,8 @@ extends Node
 ##
 ## Tools can override: `--cs-look=<id>`, `--cs-quality=<id>`, `--cs-look-set=key=value,...` (any key of a look).
 
-const LOOK_IDS := ["golden", "overcast", "noon"]
-const LOOK_NAMES := {"golden": "Golden hour", "overcast": "Overcast", "noon": "Bright noon"}
+const LOOK_IDS := ["golden", "overcast", "noon", "dusk"]
+const LOOK_NAMES := {"golden": "Golden hour", "overcast": "Overcast", "noon": "Bright noon", "dusk": "Dusk"}
 const QUALITY_IDS := ["low", "medium", "high", "ultra"]
 const QUALITY_NAMES := {"low": "Low", "medium": "Medium", "high": "High", "ultra": "Ultra"}
 const SETTINGS := "user://castle_scaper_realistic.cfg"
@@ -24,7 +24,7 @@ const LOOKS := {
 	"golden": {
 		"sun_elev": 20.0, "sun_az": -38.0, "sun_col": Color(1.0, 0.72, 0.44), "sun_energy": 3.5, "sun_angle": 0.7, "sun_spec": 1.0,
 		"zenith": Color(0.13, 0.28, 0.58), "horizon": Color(0.93, 0.82, 0.68), "glow_col": Color(1.0, 0.55, 0.26), "glow_power": 1.0,
-		"sky_ground": Color(0.25, 0.4, 0.45), "cloud_cover": 0.42, "cloud_dark": 0.05, "haze": 0.75, "sun_power": 5.0,
+		"sky_ground": Color(0.25, 0.4, 0.45), "cloud_cover": 0.42, "cloud_dark": 0.05, "haze": 0.75, "sun_power": 5.0, "rays": 0.3, "cirrus": 0.6, "stars": 0.0, "night": 0.0, "tone_shadow": Color(-0.015, 0.012, 0.05), "tone_high": Color(0.05, 0.02, -0.035),
 		"ambient": 0.85, "ambient_sky": 0.4, "ambient_col": Color(0.82, 0.8, 0.8),
 		"fog_col": Color(0.74, 0.66, 0.58), "fog_density": 0.0011, "vol_fog": 0.00025, "vol_col": Color(1.0, 0.78, 0.55),
 		"tonemap": 2, "exposure": 0.9, "white": 6.0, "contrast": 1.06, "saturation": 1.1, "brightness": 1.0, "glow": 0.5,
@@ -35,7 +35,7 @@ const LOOKS := {
 	"overcast": {
 		"sun_elev": 40.0, "sun_az": -38.0, "sun_col": Color(0.86, 0.9, 1.0), "sun_energy": 0.55, "sun_angle": 2.5, "sun_spec": 0.25,
 		"zenith": Color(0.4, 0.44, 0.5), "horizon": Color(0.62, 0.65, 0.68), "glow_col": Color(0.8, 0.84, 0.9), "glow_power": 0.1,
-		"sky_ground": Color(0.28, 0.33, 0.38), "cloud_cover": 0.8, "cloud_dark": 0.75, "haze": 0.9, "sun_power": 0.0,
+		"sky_ground": Color(0.28, 0.33, 0.38), "cloud_cover": 0.8, "cloud_dark": 0.75, "haze": 0.9, "sun_power": 0.0, "rays": 0.0, "cirrus": 0.0, "stars": 0.0, "night": 0.25, "tone_shadow": Color(0.0, 0.01, 0.03), "tone_high": Color(0.0, 0.0, 0.01),
 		"ambient": 1.5, "ambient_sky": 0.7, "ambient_col": Color(0.85, 0.9, 1.0),
 		"fog_col": Color(0.55, 0.6, 0.65), "fog_density": 0.0035, "vol_fog": 0.0012, "vol_col": Color(0.7, 0.75, 0.8),
 		"tonemap": 4, "exposure": 1.0, "white": 6.0, "contrast": 1.1, "saturation": 0.88, "brightness": 1.0, "glow": 0.35,
@@ -46,13 +46,25 @@ const LOOKS := {
 	"noon": {
 		"sun_elev": 56.0, "sun_az": 35.0, "sun_col": Color(1.0, 0.96, 0.88), "sun_energy": 3.4, "sun_angle": 0.5, "sun_spec": 1.0,
 		"zenith": Color(0.1, 0.3, 0.72), "horizon": Color(0.66, 0.82, 0.95), "glow_col": Color(1.0, 0.9, 0.7), "glow_power": 0.25,
-		"sky_ground": Color(0.3, 0.55, 0.65), "cloud_cover": 0.34, "cloud_dark": 0.0, "haze": 0.5, "sun_power": 4.0,
+		"sky_ground": Color(0.3, 0.55, 0.65), "cloud_cover": 0.34, "cloud_dark": 0.0, "haze": 0.5, "sun_power": 4.0, "rays": 0.1, "cirrus": 0.5, "stars": 0.0, "night": 0.0, "tone_shadow": Color(0.0, 0.01, 0.03), "tone_high": Color(0.02, 0.015, 0.0),
 		"ambient": 1.1, "ambient_sky": 0.55, "ambient_col": Color(0.86, 0.88, 0.92),
 		"fog_col": Color(0.7, 0.84, 0.95), "fog_density": 0.0005, "vol_fog": 0.0001, "vol_col": Color(1.0, 0.97, 0.9),
 		"tonemap": 2, "exposure": 0.9, "white": 6.0, "contrast": 1.1, "saturation": 1.2, "brightness": 1.0, "glow": 0.4,
-		"water_deep": Color(0.02, 0.2, 0.34), "water_shallow": Color(0.1, 0.6, 0.58), "water_clarity": 6.0, "water_chop": 0.4,
+		"water_deep": Color(0.02, 0.2, 0.34), "water_shallow": Color(0.1, 0.6, 0.58), "water_clarity": 10.0, "water_chop": 0.4,
 		"wetness": 0.0, "moss": 0.35, "grime": 0.6,
 		"vignette": 0.18, "grain": 0.01, "sharpen": 0.3, "clarity": 0.35, "tint": Color(1.0, 1.0, 1.0),
+	},
+	"dusk": {
+		"sun_elev": 4.0, "sun_az": -38.0, "sun_col": Color(1.0, 0.46, 0.22), "sun_energy": 2.4, "sun_angle": 1.0, "sun_spec": 1.0,
+		"zenith": Color(0.05, 0.09, 0.28), "horizon": Color(0.82, 0.42, 0.36), "glow_col": Color(1.0, 0.4, 0.18), "glow_power": 1.4,
+		"sky_ground": Color(0.12, 0.17, 0.26), "cloud_cover": 0.5, "cloud_dark": 0.25, "haze": 0.85, "sun_power": 3.0, "rays": 0.25, "cirrus": 0.8, "stars": 0.9, "night": 0.9,
+		"tone_shadow": Color(-0.02, 0.0, 0.06), "tone_high": Color(0.06, 0.015, -0.04),
+		"ambient": 0.55, "ambient_sky": 0.7, "ambient_col": Color(0.55, 0.6, 0.85),
+		"fog_col": Color(0.5, 0.36, 0.38), "fog_density": 0.0014, "vol_fog": 0.0004, "vol_col": Color(1.0, 0.5, 0.3),
+		"tonemap": 2, "exposure": 1.05, "white": 6.0, "contrast": 1.1, "saturation": 1.0, "brightness": 1.0, "glow": 0.85,
+		"water_deep": Color(0.01, 0.05, 0.1), "water_shallow": Color(0.04, 0.16, 0.22), "water_clarity": 2.5, "water_chop": 0.5,
+		"wetness": 0.1, "moss": 0.5, "grime": 0.8,
+		"vignette": 0.34, "grain": 0.016, "sharpen": 0.25, "clarity": 0.3, "tint": Color(0.95, 0.88, 1.0),
 	},
 }
 
@@ -186,6 +198,9 @@ func _apply_look() -> void:
 	sky_mat.set_shader_parameter("cloud_cover", float(g.cloud_cover))
 	sky_mat.set_shader_parameter("cloud_dark", float(g.cloud_dark))
 	sky_mat.set_shader_parameter("haze", float(g.haze))
+	sky_mat.set_shader_parameter("stars", float(g.stars))
+	sky_mat.set_shader_parameter("rays", float(g.rays))
+	sky_mat.set_shader_parameter("cirrus", float(g.cirrus))
 	# the air: ambient light from the sky, depth haze
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	env.ambient_light_color = g.ambient_col
@@ -207,6 +222,7 @@ func _apply_look() -> void:
 	env.adjustment_brightness = float(g.brightness)
 	env.adjustment_contrast = float(g.contrast)
 	env.adjustment_saturation = float(g.saturation)
+	env.adjustment_color_correction = lut_for(g.tone_shadow, g.tone_high)
 	env.glow_enabled = float(g.glow) > 0.0
 	env.glow_intensity = float(g.glow)
 	env.glow_strength = 0.9
@@ -237,6 +253,8 @@ func _apply_look() -> void:
 		main.mat_plaster.set_shader_parameter("moss", float(g.moss))
 		main.mat_plaster.set_shader_parameter("grime", float(g.grime))
 	if main.prop_mat:
+		main.prop_mat.set_shader_parameter("night", float(g.night))
+		main.leave_mat.set_shader_parameter("night", float(g.night))
 		main.prop_mat.set_shader_parameter("wetness", float(g.wetness))
 		main.leave_mat.set_shader_parameter("wetness", float(g.wetness))
 	# the lens
@@ -348,3 +366,30 @@ func look_name() -> String:
 
 func quality_name() -> String:
 	return str(QUALITY_NAMES[quality_id])
+
+
+static var _luts := {}
+
+
+## A 16-cube colour table: a split tone, the shadows pushed toward `shadow` and the lights toward `high` (offsets on 0..1).
+static func lut_for(shadow: Color, high: Color) -> ImageTexture3D:
+	var key := "%s%s" % [shadow, high]
+	if _luts.has(key):
+		return _luts[key]
+	var n := 16
+	var imgs: Array[Image] = []
+	for z in n:
+		var img := Image.create_empty(n, n, false, Image.FORMAT_RGB8)
+		for y in n:
+			for x in n:
+				var c := Vector3(x, y, z) / float(n - 1)
+				var l := c.dot(Vector3(0.2126, 0.7152, 0.0722))
+				var sh := pow(1.0 - l, 2.0)
+				var hi := l * l
+				c += Vector3(shadow.r, shadow.g, shadow.b) * sh + Vector3(high.r, high.g, high.b) * hi
+				img.set_pixel(x, y, Color(clampf(c.x, 0.0, 1.0), clampf(c.y, 0.0, 1.0), clampf(c.z, 0.0, 1.0)))
+		imgs.append(img)
+	var tex := ImageTexture3D.new()
+	tex.create(Image.FORMAT_RGB8, n, n, n, false, imgs)
+	_luts[key] = tex
+	return tex

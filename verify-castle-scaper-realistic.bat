@@ -34,7 +34,7 @@ if errorlevel 1 goto failed
 echo.
 echo === every light at every quality (windowed, under the memory guard; shader errors fail it) ===
 if exist "%GUARD%" (
-  powershell -NoProfile -ExecutionPolicy Bypass -File "%GUARD%" -WorkDir "%cd%" -Seconds 240 -LimitGB 3.5 -TimeIsFailure -ShowLog -WindowMode Hidden -Exe "%GODOT%" -ExeArgs "--path . --audio-driver Dummy --resolution 1280x720 --script res://tests/verify_cs_look.gd -- --cs-fresh --cs-starter=castle"
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%GUARD%" -WorkDir "%cd%" -Seconds 240 -LimitGB 4.0 -TimeIsFailure -ShowLog -WindowMode Hidden -Exe "%GODOT%" -ExeArgs "--path . --audio-driver Dummy --resolution 1280x720 --script res://tests/verify_cs_look.gd -- --cs-fresh --cs-starter=castle"
 ) else (
   "%GODOT%" --path "%cd%" --audio-driver Dummy --resolution 1280x720 --script res://tests/verify_cs_look.gd -- --cs-fresh --cs-starter=castle
 )

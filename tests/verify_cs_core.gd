@@ -408,7 +408,7 @@ func _look() -> void:
 			if not row.has(k):
 				missing.append(k)
 		ok(missing.is_empty(), "light %s has every key of golden hour (missing %s)" % [id, str(missing)])
-		ok(float(row.sun_elev) > 5.0 and float(row.sun_elev) < 85.0 and float(row.sun_energy) > 0.0, "light %s: the sun is above the horizon" % id)
+		ok(float(row.sun_elev) > 2.0 and float(row.sun_elev) < 85.0 and float(row.sun_energy) > 0.0, "light %s: the sun is above the horizon" % id)
 		ok(float(row.exposure) > 0.3 and float(row.exposure) < 2.5, "light %s: exposure in range" % id)
 	var qkeys: Array = (CSLook.QUALITY["high"] as Dictionary).keys()
 	for id: String in CSLook.QUALITY_IDS:

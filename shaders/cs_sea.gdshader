@@ -46,7 +46,26 @@ vec2 swell(vec2 p, float ang, float wl, float amp, float speed, inout float cres
 	return d * c * amp * k;
 }
 
+vec2 warp_q(vec2 p) {
+	return p + 8.0 * (vec2(vn(p * 0.04 + TIME * 0.02), vn(p * 0.04 + 9.0 - TIME * 0.02)) - 0.5) + 1.6 * (vec2(vn(p * 0.23 + 3.0), vn(p * 0.23 + 17.0 + TIME * 0.05)) - 0.5);
+}
+
+float swell_h(vec2 p, float ang, float wl, float amp, float speed) {
+	vec2 d = vec2(cos(ang), sin(ang));
+	float k = 6.2831853 / wl;
+	float cr = dot(p, vec2(-d.y, d.x)) * k * 0.23;
+	float ph = dot(p, d) * k + TIME * speed + 3.4 * sin(cr + 2.6 * sin(cr * 0.57 + ang * 3.0));
+	return amp * sin(ph);
+}
+
 void vertex() {
+	// the three long swells lift and lower the surface itself (the mesh is dense near the island, coarse far away)
+	vec3 wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	vec2 q = warp_q(wp.xz);
+	float dist = length(wp - CAMERA_POSITION_WORLD);
+	float keep = 1.0 - smoothstep(200.0, 1100.0, dist);
+	float h = swell_h(q, 0.4, 38.0, 0.16 * chop, 0.9) + swell_h(q, 1.1, 21.0, 0.10 * chop, 1.2) + swell_h(q, -0.6, 12.0, 0.06 * chop, 1.5);
+	VERTEX.y += h * keep * 1.6;
 	v_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 }
 
@@ -56,15 +75,15 @@ void fragment() {
 	float fade = 1.0 - smoothstep(60.0, 420.0, dist);          // small waves die with distance
 	float fade2 = 1.0 - smoothstep(25.0, 140.0, dist);
 	// a slow domain warp so the swells never line up
-	vec2 q = p + 8.0 * (vec2(vn(p * 0.04 + TIME * 0.02), vn(p * 0.04 + 9.0 - TIME * 0.02)) - 0.5) + 1.6 * (vec2(vn(p * 0.23 + 3.0), vn(p * 0.23 + 17.0 + TIME * 0.05)) - 0.5);
+	vec2 q = warp_q(p);
 	float crest = 0.0;
 	vec2 sl = vec2(0.0);
 	sl += swell(q, 0.4, 38.0, 0.16 * chop, 0.9, crest);
 	sl += swell(q, 1.1, 21.0, 0.10 * chop, 1.2, crest);
 	sl += swell(q, -0.6, 12.0, 0.06 * chop, 1.5, crest) * mix(0.6, 1.0, fade);
-	sl += swell(q, 2.2, 6.5, 0.035 * chop, 2.0, crest) * fade;
-	sl += swell(q, -1.7, 3.4, 0.02 * chop, 2.6, crest) * fade;
-	sl += swell(q, 0.8, 1.7, 0.012 * chop, 3.4, crest) * fade2;
+	sl += swell(q, 2.2, 6.5, 0.024 * chop, 2.0, crest) * fade;
+	sl += swell(q, -1.7, 3.4, 0.012 * chop, 2.6, crest) * fade;
+	sl += swell(q, 0.8, 1.7, 0.007 * chop, 3.4, crest) * fade2;
 	sl += swell(q, -2.6, 0.9, 0.008 * chop, 4.1, crest) * fade2;
 	sl += (vec2(vn(p * 4.0 + TIME * 0.3), vn(p * 4.0 + 5.0 - TIME * 0.25)) - 0.5) * 0.05 * chop * fade2;
 	vec3 nw = normalize(vec3(-sl.x, 1.0, -sl.y));
@@ -88,7 +107,8 @@ void fragment() {
 	float lap = 0.5 + 0.5 * sin(TIME * 1.4 + fn * 6.0 + thick * 4.0);
 	float shore = smoothstep(0.35, 0.0, thick - fn * 0.5 + lap * 0.25 - 0.1) * edge;
 	float far_crest = smoothstep(0.7, 1.1, crest * 2.0 + fn * 0.2 - 0.1) * chop * fade * 0.2;
-	float foam = clamp(shore + far_crest, 0.0, 1.0);
+	float swash = smoothstep(0.7, 1.0, sin(thick * 6.5 - TIME * 1.9 + fn * 5.0)) * smoothstep(1.9, 0.25, thick) * 0.55 * smoothstep(0.0, 0.15, thick);
+	float foam = clamp(shore + far_crest + swash, 0.0, 1.0);
 	col = mix(col, foam_col, foam);
 	alpha = mix(alpha, 1.0, foam);
 
@@ -97,7 +117,9 @@ void fragment() {
 	float refl_a = 0.0;
 	if (refl_on > 0.5) {
 		vec2 ruv = vec2(SCREEN_UV.x, 1.0 - SCREEN_UV.y) + nw.xz * (0.05 + 0.1 * fade2) * vec2(1.0, 1.4);
-		vec4 rf = texture(refl_tex, ruv);
+		float bl = 0.0015 + 0.004 * (1.0 - fade2) + 0.003 * length(sl);
+		vec4 rf = (texture(refl_tex, ruv) * 2.0 + texture(refl_tex, ruv + vec2(bl, 0.0)) + texture(refl_tex, ruv - vec2(bl, 0.0))
+			+ texture(refl_tex, ruv + vec2(0.0, bl)) + texture(refl_tex, ruv - vec2(0.0, bl))) / 6.0;
 		float ndv = clamp(dot(normalize(NORMAL), normalize(VIEW)), 0.0, 1.0);
 		float fres = 0.1 + 0.9 * pow(1.0 - ndv, 4.0);
 		refl_a = rf.a * clamp(fres * 1.8, 0.0, 0.85) * (1.0 - foam);

@@ -171,3 +171,80 @@ static func seabed_mesh() -> ArrayMesh:
 	var m := ArrayMesh.new()
 	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
 	return m
+
+
+static func sea_mesh() -> ArrayMesh:
+	## The water surface: a disc 3 km across, rings spaced as r = R * (i / N)^2 so it is dense (about 1.5 m) at the island, where the
+	## long swells lift it, and coarse far away (flat there: the shader fades the displacement out).
+	var rings := 200
+	var segs := 256
+	var rmax := 3000.0
+	var verts := PackedVector3Array()
+	var idx := PackedInt32Array()
+	for i in rings + 1:
+		var r := rmax * pow(float(i) / float(rings), 2.0)
+		for j in segs:
+			var a := TAU * float(j) / float(segs)
+			verts.append(Vector3(cos(a) * r, 0.0, sin(a) * r))
+	for i in rings:
+		for j in segs:
+			var a := i * segs + j
+			var b := i * segs + (j + 1) % segs
+			var c := (i + 1) * segs + j
+			var d := (i + 1) * segs + (j + 1) % segs
+			idx.append_array([a, c, b, b, c, d])
+	var nrm := PackedVector3Array()
+	nrm.resize(verts.size())
+	nrm.fill(Vector3.UP)
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = verts
+	arr[Mesh.ARRAY_NORMAL] = nrm
+	arr[Mesh.ARRAY_INDEX] = idx
+	var m := ArrayMesh.new()
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	m.custom_aabb = AABB(Vector3(-3000, -6, -3000), Vector3(6000, 12, 6000))
+	return m
+
+
+static func island_mesh(seed_i: int, radius: float, height: float) -> ArrayMesh:
+	## A far island: a lumpy cone with ridges, reaching down below the sea floor so it stands in the water at any depth.
+	var nz := FastNoiseLite.new()
+	nz.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	nz.seed = seed_i
+	nz.frequency = 1.0 / radius * 2.2
+	nz.fractal_octaves = 5
+	var n := 72
+	var verts := PackedVector3Array()
+	var idx := PackedInt32Array()
+	for iz in n + 1:
+		for ix in n + 1:
+			var x := (float(ix) / float(n) * 2.0 - 1.0) * radius
+			var z := (float(iz) / float(n) * 2.0 - 1.0) * radius
+			var r := sqrt(x * x + z * z) / radius
+			var body := clampf(1.0 - r * r, 0.0, 1.0)
+			var h := height * pow(body, 0.9) * (0.55 + 0.9 * (nz.get_noise_2d(x, z) * 0.5 + 0.5))
+			h += height * 0.18 * absf(nz.get_noise_2d(x * 2.3 + 40.0, z * 2.3)) * body
+			verts.append(Vector3(x, h - 12.0 * (1.0 - body) - 8.0, z))
+	for iz in n:
+		for ix in n:
+			var a := iz * (n + 1) + ix
+			idx.append_array([a, a + 1, a + n + 1, a + 1, a + n + 2, a + n + 1])
+	var nrm := PackedVector3Array()
+	nrm.resize(verts.size())
+	for t in range(0, idx.size(), 3):
+		var fn := (verts[idx[t + 1]] - verts[idx[t]]).cross(verts[idx[t + 2]] - verts[idx[t]])
+		for k in 3:
+			nrm[idx[t + k]] += fn
+	for i in nrm.size():
+		nrm[i] = nrm[i].normalized()
+		if nrm[i].y < 0.0:
+			nrm[i] = -nrm[i]
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = verts
+	arr[Mesh.ARRAY_NORMAL] = nrm
+	arr[Mesh.ARRAY_INDEX] = idx
+	var m := ArrayMesh.new()
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	return m

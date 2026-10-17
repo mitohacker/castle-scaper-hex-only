@@ -192,6 +192,24 @@ Cost (1920 x 1080, RTX 5070 Ti laptop, castle starter, `--cs-uncap`, GPU otherwi
 High 175, Ultra 105 (peak private memory 1.4 -> 2.4 GB; Ultra's reflection is half resolution, at 0.75 it read 49). With another program using the
 GPU (incremental-rts at 91 %) the same runs read 79 / 69 / 59 / 20: measure on a quiet machine (`Get-Counter '\GPU Engine(*engtype_3D)\Utilization Percentage'`).
 
+**Round 2 (2026-10-18, "do all" after an analysis of what still held the look back):**
+
+- *Masonry depth*: steep **parallax** in `cs_castle.gdshader` (`parallax_uv`, 8 steps, joints recessed 3 cm; ashlar and brick, only within ~0.8 m / px footprints).
+  New props: **string courses** (moulded bands under the parapet line of every level, `M_STRING`), **ivy** patches (150 two-sided leaves and vines,
+  `M_IVY`, more on the lower levels), and a better **window**: a leaded glass pane set back, a mullion and transom, a drip under the sill. Cracks now
+  break up along their Voronoi edges and the lost-render patches are fewer. Tile roofs and the rock lost their loud colour and marble veins.
+- *Sea*: the water mesh is a 3 km polar disc (`CSRocks.sea_mesh`, dense at the island) and the three long swells **displace the surface**
+  (`swell_h`, same phases as the normals, faded out from 200 m to 1.1 km); animated **swash foam** bands where the water laps the rocks; the reflection is
+  **blurred** by distance and slope and renders every other frame (`UPDATE_ONCE`).
+- *Sky and horizon*: a second high layer of **cirrus**, billowed clouds, **crepuscular rays** round the sun, **stars** (dusk); four **far islands**
+  (`cs_island.gdshader`, `CSRocks.island_mesh`: forest, crags, a beach) at 0.6 - 1.9 km, hazed by the fog, ringed by the water's own shore foam.
+- *Light*: a fourth light, **Dusk** (sun 4 deg, deep blue zenith, red horizon, stars, lit windows and lanterns through the props shader's `night`
+  uniform, 0.9); every light has a **colour table** (`CSLook.lut_for`, a 16-cube split tone: shadows pushed toward `tone_shadow`, lights toward
+  `tone_high`) in the environment's colour correction.
+- *Life* (`scripts/cs_life.gd`, `CSLife`): smoke from every chimney (CPU particles, rebuilt with each castle), six gulls soaring on circles with
+  flapping wings, a **sailing boat** circling the island 58 m out, and a **puff of dust** (a **splash** on the water) when a block goes down or comes away.
+- Cost (same machine, GPU idle, with all of it): Low 386 fps, Medium 236, High 131, Ultra 81.
+
 ## 7. The editor (`scripts/cs_main.gd`, `scripts/cs_ui.gd`)
 
 | input | does |
@@ -298,8 +316,9 @@ bridges 25, random:5:70 25). Screenshots: `shots/corner_bridges_overview.png`, `
 
 ## 10. Open (realistic look)
 
-- Not done: night (the `night` uniform of the props shader is not driven; no moon, stars or window glow); wind-bent birds and flags are not
-  matched to each other; no waves breaking on the rocks (the foam is depth-based only); the castle's shadow does not fall on the sea floor's
-  caustics; the sea has no Gerstner displacement (normals only, so the horizon is flat); no rain. The reflection shows the castle's
-  underwater rock where the mirrored view crosses it. SDFGI follows edits (static-mesh update) but is the dear part of Ultra.
-- Walls still read as clean low-poly forms from close: the mock-ups' chipped, leaning masonry would need geometry (no displaced mesh yet).
+- Done in round 2 (see section 6): masonry parallax, string courses, ivy, window glazing, displaced waves, swash foam, cirrus, rays, far islands,
+  a colour table per light, Dusk with lit windows, smoke, gulls, a boat, dust and splashes.
+- Still not done: chipped, leaning masonry silhouettes (the walls are still clean planes, the parallax is only in the shading; a displaced mesh or
+  merlon chips would need geometry in `cs_build`, risking the weld audit); a plinth flare; spray particles where waves break; rain and mist
+  particles in Overcast; the sea has no horizontal Gerstner motion and no wind on the boat's sail; the dusk look has no Tripo mock-up; SDFGI is the
+  dear part of Ultra; the boat does not avoid a large castle (it circles at 58 m).
