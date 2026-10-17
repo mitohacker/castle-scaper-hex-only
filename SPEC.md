@@ -210,6 +210,17 @@ GPU (incremental-rts at 91 %) the same runs read 79 / 69 / 59 / 20: measure on a
   flapping wings, a **sailing boat** circling the island 58 m out, and a **puff of dust** (a **splash** on the water) when a block goes down or comes away.
 - Cost (same machine, GPU idle, with all of it): Low 386 fps, Medium 236, High 131, Ultra 81.
 
+**Pen over the picture (2026-10-18, Kevin starred the round-3 "light" pen-and-pencil mock-ups of the overcast castle and said "use the ones I starred"):**
+`scripts/cs_pen.gd` (`CSPen`, a `CompositorEffect` on the camera, a compute shader after the transparent pass, before tone mapping), setting Pen = Off / Light /
+Full (key **N**, the top bar's Pen button, kept in the settings file, `--cs-pen=`). It reads the resolved colour and depth: **pen** = thin, shaken black
+outlines from steps in the inverse depth (1/z is affine over a flat face, so only silhouettes light up; Full also draws creases from its second
+difference), one wobbly horizon line, dashed cloud edges (from the sky's brightness), with breaks and uneven weight; **pencil** = scribble bundles in
+the sky (pinned to the sky dome by the view direction) and long wavy strokes on the sea (pinned to the water plane by the ray-plane hit, two crossing
+sets, fading out by 700 m), in lilac / blue / white / grey and teal / white / blue, never on the castle (the sea strokes stop at anything solid in front
+of the water). No ink under the water (the sea floor's far edge drew a second horizon). Cost: High 151 -> 143 fps. Compared with the two starred pictures
+in `castle-scaper-realistic-art/reference/compare/pen_*.jpg`. Not matched: the mock-up's hatching in shadow and its colour-pencil wash over the walls;
+the game draws only lines on the castle (a stroke texture for walls and roofs would need a UV or screen-space pencil layer).
+
 ## 7. The editor (`scripts/cs_main.gd`, `scripts/cs_ui.gd`)
 
 | input | does |

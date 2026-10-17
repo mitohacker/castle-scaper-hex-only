@@ -25,6 +25,7 @@ var rocks_mi: MeshInstance3D
 var look: CSLook
 var reflect: CSReflect
 var life: CSLife
+var pen: CSPen
 var grid_mi: MeshInstance3D
 var grid_mat: ShaderMaterial
 var ghost_mi: MeshInstance3D
@@ -85,6 +86,10 @@ func _ready() -> void:
 		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	_make_environment()
 	_make_camera()
+	pen = CSPen.new()
+	var comp := Compositor.new()
+	comp.compositor_effects = [pen]
+	cam.compositor = comp
 	mat_plaster = ShaderMaterial.new()
 	mat_plaster.shader = load("res://shaders/cs_castle.gdshader")
 	mat_plaster.set_shader_parameter("land_y", CSBuild.B)
@@ -724,6 +729,8 @@ func _update_camera(delta: float) -> void:
 
 func _process(delta: float) -> void:
 	time_alive += delta
+	if pen != null:
+		pen.time = time_alive
 	_poll_build()
 	if dirty:
 		_rebuild()
@@ -869,6 +876,11 @@ func _key(e: InputEventKey) -> void:
 		KEY_N:
 			if ctrl:
 				new_town()
+			else:
+				look.cycle_pen()
+				flash("Pen: " + look.pen_name())
+				if ui:
+					ui.refresh()
 		KEY_B:
 			toggle_birds()
 		KEY_P:

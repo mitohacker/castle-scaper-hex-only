@@ -23,6 +23,7 @@ verify-castle-scaper-realistic.bat      :: compile, core suite (headless), edito
 | 1-0 - = or the swatches | material |
 | Ctrl+Z / Ctrl+Y / Ctrl+S / Ctrl+N | undo / redo / save / empty sea |
 | L / G | the light: golden hour, overcast, bright noon, dusk / the quality: low, medium, high, ultra |
+| N | the pen: off, light, full (pen outlines and colour-pencil scribbles drawn over the picture) |
 | B / P / F / Space | birds / details / frame / slow turn |
 
 Design, rules, engine, the look and numbers: [SPEC.md](SPEC.md). What is left compared with Townscaper: [TOWNSCAPER_GAP.md](TOWNSCAPER_GAP.md).

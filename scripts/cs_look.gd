@@ -15,6 +15,8 @@ const LOOK_IDS := ["golden", "overcast", "noon", "dusk"]
 const LOOK_NAMES := {"golden": "Golden hour", "overcast": "Overcast", "noon": "Bright noon", "dusk": "Dusk"}
 const QUALITY_IDS := ["low", "medium", "high", "ultra"]
 const QUALITY_NAMES := {"low": "Low", "medium": "Medium", "high": "High", "ultra": "Ultra"}
+const PEN_IDS := ["off", "light", "full"]
+const PEN_NAMES := {"off": "Off", "light": "Light", "full": "Full"}
 const SETTINGS := "user://castle_scaper_realistic.cfg"
 
 ## One row per light. sun: elevation above the horizon and the compass turn (degrees), colour, energy. sky_*: CSSky uniforms.
@@ -97,6 +99,7 @@ var lens_mat: ShaderMaterial
 var attrs: CameraAttributesPractical
 var reflect: CSReflect
 var look_id := "golden"
+var pen_id := "off"
 var quality_id := "high"
 var cur := {}
 var q := {}
@@ -117,8 +120,13 @@ func setup(p_main: Node, p_env: Environment, p_sun: DirectionalLight3D, p_sky: S
 	if cf.load(SETTINGS) == OK and not _args.has("fresh"):
 		look_id = str(cf.get_value("look", "light", look_id))
 		quality_id = str(cf.get_value("look", "quality", quality_id))
+		pen_id = str(cf.get_value("look", "pen", pen_id))
 	if _args.has("look") and LOOKS.has(str(_args.look)):
 		look_id = str(_args.look)
+	if _args.has("pen") and str(_args.pen) in PEN_IDS:
+		pen_id = str(_args.pen)
+	if not pen_id in PEN_IDS:
+		pen_id = "off"
 	if _args.has("quality") and QUALITY.has(str(_args.quality)):
 		quality_id = str(_args.quality)
 	if not LOOKS.has(look_id):
@@ -145,6 +153,16 @@ func cycle_look() -> void:
 	apply()
 
 
+func cycle_pen() -> void:
+	pen_id = PEN_IDS[(PEN_IDS.find(pen_id) + 1) % PEN_IDS.size()]
+	_save()
+	apply()
+
+
+func pen_name() -> String:
+	return str(PEN_NAMES[pen_id])
+
+
 func cycle_quality() -> void:
 	quality_id = QUALITY_IDS[(QUALITY_IDS.find(quality_id) + 1) % QUALITY_IDS.size()]
 	_save()
@@ -158,6 +176,7 @@ func _save() -> void:
 	cf.load(SETTINGS)
 	cf.set_value("look", "light", look_id)
 	cf.set_value("look", "quality", quality_id)
+	cf.set_value("look", "pen", pen_id)
 	cf.save(SETTINGS)
 
 
@@ -171,6 +190,8 @@ func apply() -> void:
 	_apply_quality()
 	if reflect:
 		reflect.configure(float(q.refl), env)
+	if main.pen != null:
+		main.pen.set_mode(PEN_IDS.find(pen_id))
 	changed.emit()
 
 

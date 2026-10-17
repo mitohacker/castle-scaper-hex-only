@@ -110,6 +110,19 @@ func _run() -> void:
 	ok(look.quality_id == "ultra", "G moves to the next quality (%s)" % look.quality_id)
 	await _key(KEY_G)
 	ok(look.quality_id == "low", "G wraps round to low (%s)" % look.quality_id)
+	# the pen over the picture: off, light, full; the compute pass must not break the frame
+	look.pen_id = "off"
+	look.apply()
+	await _key(KEY_N)
+	ok(look.pen_id == "light" and main.pen.mode == 1 and main.pen.enabled, "N turns the pen to light (%s)" % look.pen_id)
+	await _wait(8)
+	ok(_spread() > 0.03, "the picture has content with the pen on light")
+	await _key(KEY_N)
+	ok(look.pen_id == "full" and main.pen.mode == 2, "N turns the pen to full")
+	await _wait(8)
+	ok(_spread() > 0.03, "the picture has content with the pen on full")
+	await _key(KEY_N)
+	ok(look.pen_id == "off" and not main.pen.enabled, "N wraps round to off")
 	# overrides
 	look._overrides = {"exposure": 0.5}
 	look.apply()
