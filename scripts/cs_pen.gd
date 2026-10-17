@@ -215,16 +215,53 @@ void main() {
 		cover = mix(0.3 * dark, cover, seen);
 		vec3 ink_col = vec3(0.03, 0.03, 0.05);
 		col.rgb = mix(col.rgb, ink_col, clamp(cover * P.d.y * 0.7, 0.0, 0.85));
-		// pencil wash: broad strokes that pull the surface's own colour a little further, lighter and warmer where it is lit
-		float spw = 0.07;
-		float seenw = smoothstep(2.0, 3.5, spw / pf);
-		float phw = dot(W, normalize(vec3(0.7, -0.45, 0.55))) / spw + 0.5 * vn(W.xz * 0.7 + W.y * 0.5);
-		float tone = h21(vec2(floor(phw), floor(dot(W, vec3(0.6, 0.3, -0.7)) * 0.6)));
-		float sw = 1.0 - smoothstep(0.30, 0.5, abs(fract(phw) - 0.5));
-		sw *= smoothstep(0.2, 0.55, vn(vec2(floor(phw) * 3.1, dot(W, vec3(0.8, 0.2, -0.6)) * 0.5)));
-		vec3 sat = mix(vec3(l), col.rgb, 1.7) * (0.9 + 0.35 * tone);
-		float lit = smoothstep(0.1, 0.5, l);
-		col.rgb = mix(col.rgb, sat, clamp(sw * seenw * P.d.z * (0.35 + 0.35 * lit), 0.0, 0.7));
+		// pencil INFILL: the surface coloured in with directional strokes, as if filled by hand. Strokes follow the form (along the contours of the
+		// depth, i.e. up a wall, round a cone), sit on the paper (screen space, boiling gently with the time), have a soft tooth, uneven pressure
+		// and gaps where the paper shows, in the surface's own colour pushed toward a pencil's saturation. A second layer crosses in the deeper tones.
+		float wcn = max(wc, 1e-6);
+		int gr = max(2, int(round(4.0 * sc)));
+		float gx = (inv_depth(clamp(px + ivec2(gr, 0), ivec2(0), size - 1)) - inv_depth(clamp(px - ivec2(gr, 0), ivec2(0), size - 1))) / wcn;
+		float gy = (inv_depth(clamp(px + ivec2(0, gr), ivec2(0), size - 1)) - inv_depth(clamp(px - ivec2(0, gr), ivec2(0), size - 1))) / wcn;
+		float glen = length(vec2(gx, gy));
+		float ang0 = glen < 0.006 ? 0.9 : atan(gx, -gy);
+		ang0 = floor(ang0 / 0.2618 + 0.5) * 0.2618;                    // 15 degree steps: neighbouring pixels agree
+		vec3 mean = vec3(0.0);
+		for (int i = 0; i < 8; i++) {
+			float aa = float(i) * 0.7854;
+			mean += imageLoad(color_image, clamp(px + ivec2(vec2(cos(aa), sin(aa)) * 7.0 * sc), ivec2(0), size - 1)).rgb;
+		}
+		mean = (mean + col.rgb) / 9.0;
+		float ml = lum(mean);
+		vec3 hue = mix(vec3(ml), mean, 1.9) * 1.06;                    // the pencil's colour: the area's own, more saturated
+		vec3 infill = vec3(0.0);
+		float icov = 0.0;
+		for (int ly = 0; ly < 2; ly++) {
+			float an = ang0 + (ly == 0 ? 0.0 : 0.62);
+			vec2 q2 = vec2(cos(an) * fp.x + sin(an) * fp.y, -sin(an) * fp.x + cos(an) * fp.y) / sc;
+			float wrow = ly == 0 ? 5.2 : 6.4;
+			float v2 = q2.y / wrow;
+			float row = floor(v2);
+			float fv = fract(v2);
+			float seg = 90.0 + 130.0 * h11(row * 1.3 + float(ly) * 17.0);
+			float uu = q2.x + 400.0 * h11(row + float(ly) * 5.0) + 7.0 * floor(t * 6.0) * 0.0;
+			float si = floor(uu / seg);
+			float su = fract(uu / seg);
+			float key = h21(vec2(si, row + float(ly) * 13.0 + floor(t * 3.0) * 0.0));
+			float press = 0.45 + 0.55 * key;                              // each stroke bears down differently
+			float centre = 0.5 + 0.18 * sin(uu * 0.05 + row);
+			float body = 1.0 - smoothstep(0.22 * press + 0.12, 0.42 * press + 0.12, abs(fv - centre));
+			body *= smoothstep(0.0, 0.12, su) * (1.0 - smoothstep(0.82, 1.0, su));
+			body *= step(0.12, key);                                      // some strokes are not drawn: the paper shows
+			float tooth = 0.55 + 0.45 * h21(floor(fp / max(sc, 1.0)) * 0.73 + float(ly) * 3.0);   // paper grain eats the stroke
+			float c = body * press * tooth;
+			if (ly == 1) { c *= smoothstep(0.35, 0.1, ml) * 0.8; }          // cross strokes only in the deeper tones
+			if (c > icov) { icov = c; infill = hue * (0.82 + 0.4 * key); }
+		}
+		float lit = smoothstep(0.08, 0.45, l);
+		float strength = clamp(P.d.z * (0.8 + 0.2 * lit), 0.0, 1.2);
+		float seen_i = smoothstep(0.004, 0.02, pf);                    // far away a stroke is a flat tint
+		col.rgb = mix(col.rgb, hue, clamp(0.12 * strength, 0.0, 0.2));                    // a faint overall tint under the strokes
+		col.rgb = mix(col.rgb, infill, clamp(icov * strength * 0.75, 0.0, 0.85) * mix(0.35, 1.0, seen_i));
 		col.rgb *= 1.0 + P.d.z * (h21(floor(fp)) - 0.5) * 0.06;                   // paper grain
 	}
 	col.rgb = mix(col.rgb, pow(pcol, vec3(2.2)), clamp(pcov, 0.0, 1.0) * 0.9);
@@ -299,7 +336,7 @@ func _render_callback(p_type: int, p_render_data: RenderData) -> void:
 		float(size.x), float(size.y), time, 0.9 if light else 1.0,
 		0.85 if light else 1.0, 1.0 if light else 1.5, 1.0 if light else 1.8, 0.0 if light else 1.0,
 		proj.z.z, proj.w.z, 1.0 / absf(proj.x.x), 1.0 / absf(proj.y.y),
-		0.0, 0.55 if light else 1.0, 0.6 if light else 1.0, 0.0,
+		0.0, 0.55 if light else 1.0, 0.9 if light else 1.3, 0.0,
 		tf.basis.x.x, tf.basis.x.y, tf.basis.x.z, 0.0,
 		tf.basis.y.x, tf.basis.y.y, tf.basis.y.z, 0.0,
 		tf.basis.z.x, tf.basis.z.y, tf.basis.z.z, 0.0,

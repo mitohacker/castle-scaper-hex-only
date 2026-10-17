@@ -224,6 +224,12 @@ pull the surface's own colour further, a paper grain), both laid in WORLD space 
 when the camera moves) and faded into a flat tone when a stroke is under ~3 px. Light = hatch 0.55 / wash 0.6, Full = 1.0 / 1.0 (heavier line, creases,
 more scribbles). A solid pixel counts as water when its world height is within 0.55 m of the sea level (the water writes depth too: a ray-plane test
 misclassified wave troughs and hatched the sea). Cost on High: 152 fps with Light, 115 with Full (Off 151 before; Light costs little).
+**Pencil infill (Kevin: "I still want pencil infill"):** the world-space wash was replaced by a real infill in screen space (`cs_pen.gd`, after the hatching):
+strokes 5 px wide and 90-220 px long that follow the form (their direction is the contour of the inverse depth, in 15-degree steps; flat faces use
+a 50-degree default), each with its own pressure, a slight wave, a gap where the paper shows (about one stroke in eight is not drawn) and a paper tooth
+that eats the stroke; coloured with the surrounding area's own colour (an 8-tap ring at 7 px) pushed to 1.9 x saturation; a second layer crosses at
+36 degrees in the deeper tones; plus a faint flat tint under the strokes. Light uses 0.9, Full 1.3. Screen space, because pencil sits on the paper and
+must look the same at any zoom (it does not move with the stone: pencil strokes slide a little under camera motion). Measured on High, quiet GPU: Light 173 fps, Full 170.
 
 ## 7. The editor (`scripts/cs_main.gd`, `scripts/cs_ui.gd`)
 
