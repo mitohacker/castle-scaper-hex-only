@@ -79,6 +79,23 @@ func _key(code: int, ctrl: bool) -> void:
 	await process_frame
 
 
+func _hold(code: Key, frames: int) -> void:
+	## A key held down for some frames, through Input (the state W / A / S / D polling reads).
+	var e := InputEventKey.new()
+	e.keycode = code
+	e.physical_keycode = code
+	e.pressed = true
+	Input.parse_input_event(e)
+	for _i in frames:
+		await process_frame
+	var r := InputEventKey.new()
+	r.keycode = code
+	r.physical_keycode = code
+	r.pressed = false
+	Input.parse_input_event(r)
+	await process_frame
+
+
 func _screen(p: Vector3) -> Vector2:
 	return (main.cam as Camera3D).unproject_position(p)
 
@@ -319,6 +336,42 @@ func _run() -> void:
 		await _click(lscr2)
 		await _settle()
 		ok(town.top(lv) >= 0 and not town.has_wild(lv), "a castle block on a landscape column replaces what was there")
+	# W / A / S / D move the view across the map (Input state set by parsed key events, as a keyboard would)
+	main.cam_yaw = 0.0
+	main.cam_goal = Vector3.ZERO
+	main.cam_target = Vector3.ZERO
+	var held := {}
+	for kc: int in [KEY_W, KEY_S, KEY_A, KEY_D]:
+		held[kc] = true
+	await _hold(KEY_W, 14)
+	var g1: Vector3 = main.cam_goal
+	ok(g1.z < -1.0 and absf(g1.x) < 0.01, "W moves the view forward, away from the camera (%s)" % str(g1))
+	await _hold(KEY_S, 14)
+	var g2: Vector3 = main.cam_goal
+	ok(g2.z > g1.z + 1.0, "S moves it back (%s)" % str(g2))
+	var gx: float = g2.x
+	await _hold(KEY_D, 14)
+	ok((main.cam_goal as Vector3).x > gx + 1.0, "D moves it to the right (%s)" % str(main.cam_goal))
+	var gx2: float = (main.cam_goal as Vector3).x
+	await _hold(KEY_A, 14)
+	ok((main.cam_goal as Vector3).x < gx2 - 1.0, "A moves it to the left (%s)" % str(main.cam_goal))
+	main.cam_yaw = PI * 0.5
+	var g3: Vector3 = main.cam_goal
+	await _hold(KEY_W, 14)
+	ok((main.cam_goal as Vector3).x < g3.x - 1.0, "W follows the view's turn: forward is now along -x (%s)" % str(main.cam_goal))
+	var gy: float = main.cam_yaw
+	await _hold(KEY_E, 10)
+	ok(main.cam_yaw > gy + 0.1, "E turns the view")
+	var g4: Vector3 = main.cam_goal
+	var ctrl_e := InputEventKey.new()
+	ctrl_e.physical_keycode = KEY_CTRL
+	ctrl_e.keycode = KEY_CTRL
+	ctrl_e.pressed = true
+	Input.parse_input_event(ctrl_e)
+	await _hold(KEY_W, 10)
+	ctrl_e.pressed = false
+	Input.parse_input_event(ctrl_e)
+	ok((main.cam_goal as Vector3).distance_to(g4) < 0.01, "with Ctrl held (Ctrl+S saves) W does not move the view")
 	_end()
 
 

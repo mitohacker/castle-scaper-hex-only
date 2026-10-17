@@ -930,7 +930,40 @@ func frame_town(snap: bool) -> void:
 		cam_target = cam_goal
 
 
+func _wasd(delta: float) -> void:
+	## W / S move the view forward and back across the map, A / D sideways, Q / E turn it, Shift goes three times faster. The speed grows
+	## with the zoom (a screenful a second or so), and the focus stays on the map. Ctrl / Alt / Cmd held: no movement (Ctrl+S saves).
+	if Input.is_key_pressed(KEY_CTRL) or Input.is_key_pressed(KEY_ALT) or Input.is_key_pressed(KEY_META):
+		return
+	var f := 0.0
+	var r := 0.0
+	var t := 0.0
+	if Input.is_physical_key_pressed(KEY_W) or Input.is_physical_key_pressed(KEY_UP):
+		f += 1.0
+	if Input.is_physical_key_pressed(KEY_S) or Input.is_physical_key_pressed(KEY_DOWN):
+		f -= 1.0
+	if Input.is_physical_key_pressed(KEY_D) or Input.is_physical_key_pressed(KEY_RIGHT):
+		r += 1.0
+	if Input.is_physical_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_LEFT):
+		r -= 1.0
+	if Input.is_physical_key_pressed(KEY_E):
+		t += 1.0
+	if Input.is_physical_key_pressed(KEY_Q):
+		t -= 1.0
+	if t != 0.0:
+		cam_yaw += t * delta * 1.4 * (2.0 if Input.is_key_pressed(KEY_SHIFT) else 1.0)
+	if f == 0.0 and r == 0.0:
+		return
+	var fwd := Vector3(-sin(cam_yaw), 0.0, -cos(cam_yaw))
+	var right := Vector3(cos(cam_yaw), 0.0, -sin(cam_yaw))
+	var speed := clampf(cam_dist * 0.7, 12.0, 160.0) * (3.0 if Input.is_key_pressed(KEY_SHIFT) else 1.0)
+	cam_goal += (fwd * f + right * r).normalized() * speed * delta
+	cam_goal.x = clampf(cam_goal.x, -170.0, 170.0)
+	cam_goal.z = clampf(cam_goal.z, -170.0, 170.0)
+
+
 func _update_camera(delta: float) -> void:
+	_wasd(delta)
 	cam_target = cam_target.lerp(cam_goal, 1.0 - exp(-8.0 * delta))
 	cam_pitch = clampf(cam_pitch, 0.08, 1.45)
 	var off := Vector3(cos(cam_pitch) * sin(cam_yaw), sin(cam_pitch), cos(cam_pitch) * cos(cam_yaw)) * cam_dist

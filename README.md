@@ -21,6 +21,7 @@ verify-castle-scaper-realistic.bat      :: compile, core suite (headless), edito
 |---|---|
 | left click | put a block (on the sea, on top, or beside: the face under the mouse decides) |
 | right click | take it away |
+| W A S D (arrows) / Q E / Shift | move the view across the map / turn it / three times faster |
 | right drag / left or middle drag / wheel | turn / move / zoom |
 | 1-0 - = or the swatches | material |
 | Ctrl+Z / Ctrl+Y / Ctrl+S / Ctrl+N | undo / redo / save / empty sea |
