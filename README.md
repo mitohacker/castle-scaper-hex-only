@@ -8,6 +8,8 @@ caustics on its floor and the castle's reflection, far islands on the horizon, s
 depth of field, a filmic grade and a lens. Four lights (golden hour, overcast, bright noon, dusk with lit windows) and four qualities (low to ultra, from 390 to 80 fps
 at 1080p). Every texture is procedural; the look was fitted to Tripo image-gen mock-ups of the game's own castle (`../castle-scaper-realistic-art`).
 
+Besides castle blocks you can build **land, roads, trees, rocks and mountains**: each click turns into something different depending on what is round it (oaks, pines, willows, orchards; cobbles, gravel, dirt; junctions, bridges, jetties; quarries, scree, snow) - the Kingdom starter shows them all round the castle (SPEC section 11).
+
 Godot 4.7 (GDScript). A copy of Castle Scaper (which is unchanged).
 
 ```bat
@@ -23,12 +25,13 @@ verify-castle-scaper-realistic.bat      :: compile, core suite (headless), edito
 | 1-0 - = or the swatches | material |
 | Ctrl+Z / Ctrl+Y / Ctrl+S / Ctrl+N | undo / redo / save / empty sea |
 | L / G | the light: golden hour, overcast, bright noon, dusk / the quality: low, medium, high, ultra |
+| Tab / F1-F6 | what a click builds: castle, land, road, trees, rocks, mountains (the buttons above the swatches) |
 | N / I | the pen: off, light, full (outlines, hatching, scribbles drawn over the picture) / what it colours in with: colour pencil, watercolour, marker, crayon, stipple, scribble, gouache, ink wash, none |
 | B / P / F / Space | birds / details / frame / slow turn |
 
 Design, rules, engine, the look and numbers: [SPEC.md](SPEC.md). What is left compared with Townscaper: [TOWNSCAPER_GAP.md](TOWNSCAPER_GAP.md).
 
 Files: `scripts/cs_grid.gd`, `cs_town.gd`, `cs_build.gd`, `cs_props.gd`, `cs_starter.gd`, `cs_main.gd` + `cs_ui.gd` (Castle Scaper's);
-`cs_look.gd` (lights and qualities), `cs_rocks.gd` (rock skirt and sea floor), `cs_reflect.gd` (the reflection); `cf_*.gd` (Castle Forge's engine,
+`cs_world.gd` + `cs_roads.gd` + `cs_scatter.gd` (the landscape), `cs_look.gd` (lights and qualities), `cs_rocks.gd` (rock skirt and sea floor), `cs_reflect.gd` (the reflection); `cf_*.gd` (Castle Forge's engine,
 triangulator, roofs, audit, birds); `shaders/cs_castle`, `cs_props`, `cs_rock`, `cs_sea`, `cs_seabed`, `cs_sky`, `cs_lens` `.gdshader` and
 `cs_common.gdshaderinc`. `tools/shots.ps1` takes clean screenshots under the memory guard.

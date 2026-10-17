@@ -3,7 +3,7 @@ extends RefCounted
 ## Ready-made block layouts (the Castles menu, the tests and the screenshots). They are only blocks: every tower,
 ## roof, battlement, gate and courtyard in them comes out of CSBuild's rules, as when the player clicks them in.
 
-const NAMES := ["castle", "village", "tower", "harbour", "bridges"]
+const NAMES := ["castle", "village", "tower", "harbour", "bridges", "landscape", "kingdom"]
 
 
 static func make(name: String, grid: CSGrid, town: CSTown) -> void:
@@ -17,6 +17,10 @@ static func make(name: String, grid: CSGrid, town: CSTown) -> void:
 			_harbour(grid, town)
 		"bridges":
 			_bridges(grid, town)
+		"landscape":
+			_landscape(grid, town)
+		"kingdom":
+			_kingdom(grid, town)
 		_:
 			if name.begins_with("random"):
 				# random:SEED or random:SEED:CLICKS (the core suite's castles are random:0..15:70)
@@ -232,3 +236,86 @@ static func random_growth(grid: CSGrid, town: CSTown, seed: int, clicks: int) ->
 			if grid.buildable(u):
 				var k := rng.randi_range(0, maxi(0, town.top(v0)))
 				town.add(u, k, rng.randi_range(0, 11))
+
+
+static func _landscape(grid: CSGrid, town: CSTown) -> void:
+	## Meadow with a mountain range on the left, rocks and a pine forest below it, an orchard of trees and a road across to a headland.
+	var c := Vector2.ZERO
+	for v: int in _band(grid, c, 0.0, 26.0):
+		town.wild_add(v, CSTown.T_LAND)
+	var mc := c + Vector2(-16.0, -4.0)
+	for v: int in _band(grid, mc, 0.0, 14.0):
+		var d := grid.verts[v].distance_to(mc)
+		var n := clampi(int((14.0 - d) / 3.2) + 1, 1, 5)
+		for i in n:
+			town.wild_add(v, CSTown.T_MOUNTAIN)
+	for v: int in _band(grid, c + Vector2(-8.0, 13.0), 0.0, 8.0):
+		if town.wild_heights(v) == "":
+			for i in 1 + int(CSBuild.h01(v, 3) * 2.0):
+				town.wild_add(v, CSTown.T_ROCK)
+	for v: int in _band(grid, c + Vector2(8.0, -12.0), 0.0, 11.0):
+		for i in 1 + int(CSBuild.h01(v, 5) * 3.0):
+			town.wild_add(v, CSTown.T_TREE)
+
+	# a road from the mountains' foot across the meadow, out over the water on a bridge and on to a small headland
+	var rc := Vector2(-6.0, 6.0)
+	var road := []
+	var cur := grid.nearest(rc)
+	var goal := grid.nearest(Vector2(30.0, 6.0))
+	var guard := 0
+	while cur != goal and guard < 40:
+		guard += 1
+		road.append(cur)
+		cur = _toward(grid, cur, grid.verts[goal] - grid.verts[cur], road)
+		if cur < 0:
+			break
+	for v: int in road:
+		town.wild_add(v, CSTown.T_ROAD)
+	for v: int in _band(grid, Vector2(36.0, 6.0), 0.0, 7.0):
+		if town.wild_heights(v) == "":
+			town.wild_add(v, CSTown.T_LAND)
+
+
+static func _kingdom(grid: CSGrid, town: CSTown) -> void:
+	## The castle in its country: land all round it, mountains behind (with snow), rocks where the mountains meet the plain, a wood and an
+	## orchard by the walls, a courtyard garden, and a road from the gate across the meadow to a bridge and a village across the water.
+	_castle(grid, town)
+	var c := Vector2.ZERO
+	var ring_out := 40.0
+	for v: int in _band(grid, c, 0.0, ring_out):
+		if town.top(v) < 0:
+			town.wild_add(v, CSTown.T_LAND)
+	var mc := c + Vector2(-8.0, -34.0)
+	for v: int in _band(grid, mc, 0.0, 22.0):
+		if town.top(v) >= 0:
+			continue
+		var d := grid.verts[v].distance_to(mc)
+		var n := clampi(int((22.0 - d) / 3.4) + 1, 1, 6)
+		for i in n:
+			town.wild_add(v, CSTown.T_MOUNTAIN if i < n - 1 or d < 8.0 else CSTown.T_ROCK)
+	for v: int in _band(grid, c + Vector2(30.0, -20.0), 0.0, 9.0):
+		if town.top(v) < 0 and town.wild_heights(v) == "":
+			for i in 1 + int(CSBuild.h01(v, 11) * 2.0):
+				town.wild_add(v, CSTown.T_ROCK)
+	for v: int in _band(grid, c + Vector2(-30.0, 14.0), 0.0, 10.0):
+		if town.top(v) < 0 and town.wild_heights(v) == "":
+			for i in 2 + int(CSBuild.h01(v, 5) * 2.0):
+				town.wild_add(v, CSTown.T_TREE)
+	for v: int in _band(grid, c + Vector2(24.0, 14.0), 0.0, 7.0):
+		if town.top(v) < 0 and town.wild_heights(v) == "":
+			town.wild_add(v, CSTown.T_TREE)
+	# the road: from the gate (south, +z) out across the meadow, then east over a gap of water to the village island
+	var gate := grid.nearest(c + Vector2(0.0, 19.5))
+	var path := []
+	var cur := grid.nearest(c + Vector2(0.0, 24.0))
+	var goal := grid.nearest(c + Vector2(40.0, 30.0))
+	var guard := 0
+	while cur != goal and guard < 60:
+		guard += 1
+		path.append(cur)
+		cur = _toward(grid, cur, grid.verts[goal] - grid.verts[cur], path)
+		if cur < 0:
+			break
+	for v: int in path:
+		if town.top(v) < 0:
+			town.wild_add(v, CSTown.T_ROAD)

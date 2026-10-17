@@ -344,6 +344,63 @@ bridges 25, random:5:70 25). Screenshots: `shots/corner_bridges_overview.png`, `
   cell face, laundry lines, lamps that glow at night, gardens, sound and click effects, night, a bigger map, GLB
   export: ranked in `TOWNSCAPER_GAP.md`.
 
+## 11. The landscape: land, roads, trees, rocks and mountains
+
+Kevin 2026-10-18: "I want different build types, road, trees, rocks, mountains, all have different combinations just like the castle, and they all
+interact differently with each other for different combinations." The castle's one-action idea carries over: the player picks a **build type**
+(the bar above the swatches; **Tab** / **Shift+Tab** or **F1-F6**: Castle, Land, Road, Trees, Rocks, Mountains) and clicks; what appears comes out of
+what is round it. Right-click takes one level away; undo, redo, save and autosave cover it (`CSTown.wild`, saved as `"wild"`).
+
+**Data** (`CSTown`): per grid column a record `{l: 1 plain land, h: "mrm.." height levels from the ground up (m mountain 3.6 m, r rock 1.7 m, up to 6),
+t: tree levels 0-3 (a tree, a grove, a forest), d: 1 road}`. A click adds one level (`wild_add`): land once; trees up to three, **not in a road**; a road
+**not through trees**; mountain / rock levels stack in the order clicked. A right-click (`wild_remove`) takes trees first, then the road, then the top height
+level, then the land. A castle block on a column removes its landscape (`wild_clear`); landscape cannot go on castle ground (a courtyard takes land, trees
+and a road: a garden).
+
+**Terrain** (`cs_world.gd`, `CSWorld`, `shaders/cs_terrain.gdshader`): every column with earth is a fan of rings from its centre to the corners of its cell.
+A corner has ONE height for the four columns round it (the mean of their altitudes, flat at castle ground where castle land touches), so neighbours join
+without a crack and a ridge is just a run of mountain columns. A mountain falls away smoothly, a rock keeps a plateau and ends in a cliff; ridged noise
+roughens the slope. Coasts get a bank (beach) or a cliff, a skirt reaching below the water. The shader reads height, slope and the column's rock / forest
+share: meadow (flowers, patches, straw), forest-floor mould under trees, tundra above the tree line (8.5 m), bedded grey rock where it is steep or high, scree
+between, snow above 11 m settling where it is gentle, sand and wet dark stone at the water. `height_at`, `normal_at` and `ctx(v)` (how many neighbours are
+water, rock, mountain, road, castle, trees, land) are what every rule below reads.
+
+**Trees and rocks** (`cs_scatter.gd`, `shaders/cs_flora.gdshader`): instanced, code-made meshes (lumpy leaf masses, pine cones, poplar, weeping willow, orchard
+tree with blossom, bush, boulders, cut blocks), wind in the vertex stage, backlit leaves, snow on high pines. What stands in a column depends on its surroundings:
+
+| round it | what grows / lies there |
+| --- | --- |
+| open meadow | oak (1 tree), a grove of oaks with bushes (2), a forest of tall oaks and pines (3 with forest all round) |
+| mountain beside it, or high ground (over 4.5 m) | pine, smaller the higher, snowy; none above 8.5 m |
+| rock beside it | pine rather than oak |
+| castle beside it, no road | orchard tree with blossom |
+| a road beside it, a single tree | poplar lining the road |
+| water on two sides and low | weeping willow |
+| a rock column | boulders (more the higher it stands); against the castle half are cut blocks (a quarry) |
+| a mountain slope over 3 m | scree: a few crags |
+| meadow next to rock or mountain | pebbles and a fallen boulder |
+
+No tree stands in a road (`road_clear`), none above the tree line.
+
+**Roads** (`cs_roads.gd`, `shaders/cs_road.gdshader`): a road column joins the road columns (and castle blocks) beside it, and what one click makes depends on
+how many: **none** a plaza with a ring of standing stones; **one** a dead end (a round turning place, a lamp, a stone); **two** a smooth bend or straight
+(a quadratic curve through the column between the edge midpoints); **three or more** a junction (a hub, a signpost, and with four a well). The surface comes
+from the context: **cobbles** beside the castle, in a courtyard, at a junction and at a door's apron; **gravel** climbing a mountain or beside rock; **packed
+dirt** with ruts and a grassy verge elsewhere; where the road climbs the shader cuts steps. Between a road and a higher rock column a **retaining wall** of cut
+blocks. A road column with **no earth under it** is a **jetty** (a timber deck on piles, a lamp at the end) with one neighbour and a **bridge** with two: a
+**hump-back stone bridge** with parapets where it meets land, a **timber trestle** with rail posts where it only meets more bridge; decks take clicks and
+shadows, and a road next to a castle block makes a paved apron at its door.
+
+**Castle meets landscape:** land is flat at the castle's ground, and the castle's rock skirt is left off wherever land touches it; a courtyard with land is a
+lawn, with trees an orchard garden; a rock column against the castle makes a quarry; a road runs to a door; a mountain behind the castle shows over its roofs.
+
+Starters: **landscape** (a mountain, rocks, a wood, a road) and **kingdom** (the castle in its country, with a bridge, a jetty, a willow shore and an orchard).
+Tests: core 195 (the column rules, save round trip, flush heights, species by context, no tree in a road or above the line, roads by class, jetty, determinism,
+under 1.5 s), editor 30 (Land / Trees / Road / Mountain picked and clicked with real events, refusals, undo, a castle block replacing them).
+Costs on High (1080p, quiet GPU): the kingdom 98 fps (castle alone 131-175).
+My calls to confirm: cells of land at the castle's level, 4 rings per cell, mountain 3.6 m a level, snow at 11 m; roads only between cell edge midpoints (no
+diagonal shortcuts); no rivers, lakes or waterfalls yet (the water is the sea); trees keep their species by neighbours, not by a saved choice.
+
 ## 10. Open (realistic look)
 
 - Done in round 2 (see section 6): masonry parallax, string courses, ivy, window glazing, displaced waves, swash foam, cirrus, rays, far islands,

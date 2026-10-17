@@ -19,6 +19,24 @@ var key_light: DirectionalLight3D
 var mat_plaster: ShaderMaterial
 var castle_mi: MeshInstance3D
 var castle_shape: CollisionShape3D
+var castle_body: StaticBody3D
+var terrain_mi: MeshInstance3D
+var terrain_shape: CollisionShape3D
+var terrain_body: StaticBody3D
+var mat_terrain: ShaderMaterial
+var world: CSWorld
+var scatter: CSScatter
+var scatter_meshes: Array = []
+var scatter_mi: Array = []
+var mat_flora: ShaderMaterial
+var mat_road: ShaderMaterial
+var road_mi: MeshInstance3D
+var road_meshes: Array = []
+var road_prop_mi: Array = []
+var road_body: StaticBody3D
+var road_shape: CollisionShape3D
+var roads: CSRoads
+var build_type := 0                 # CSTown.T_*: what a click puts down
 var sea_mi: MeshInstance3D
 var seabed_mi: MeshInstance3D
 var rocks_mi: MeshInstance3D
@@ -101,6 +119,42 @@ func _ready() -> void:
 	castle_shape = CollisionShape3D.new()
 	body.add_child(castle_shape)
 	add_child(body)
+	castle_body = body
+	mat_terrain = ShaderMaterial.new()
+	mat_terrain.shader = load("res://shaders/cs_terrain.gdshader")
+	mat_flora = ShaderMaterial.new()
+	mat_flora.shader = load("res://shaders/cs_flora.gdshader")
+	mat_road = ShaderMaterial.new()
+	mat_road.shader = load("res://shaders/cs_road.gdshader")
+	road_mi = MeshInstance3D.new()
+	road_mi.name = "Roads"
+	add_child(road_mi)
+	road_body = StaticBody3D.new()
+	road_shape = CollisionShape3D.new()
+	road_body.add_child(road_shape)
+	add_child(road_body)
+	road_meshes = CSRoads.make_meshes()
+	scatter_meshes = CSScatter.make_meshes()
+	var sroot := Node3D.new()
+	sroot.name = "Flora"
+	add_child(sroot)
+	for i in CSScatter.MESH_COUNT:
+		var smi := MultiMeshInstance3D.new()
+		smi.material_override = mat_flora
+		sroot.add_child(smi)
+		scatter_mi.append(smi)
+	for i in CSRoads.MESH_COUNT:
+		var rmi := MultiMeshInstance3D.new()
+		rmi.material_override = mat_flora
+		sroot.add_child(rmi)
+		road_prop_mi.append(rmi)
+	terrain_mi = MeshInstance3D.new()
+	terrain_mi.name = "Terrain"
+	add_child(terrain_mi)
+	terrain_body = StaticBody3D.new()
+	terrain_shape = CollisionShape3D.new()
+	terrain_body.add_child(terrain_shape)
+	add_child(terrain_body)
 	ghost_mi = MeshInstance3D.new()
 	ghost_mat = StandardMaterial3D.new()
 	ghost_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -361,6 +415,7 @@ func add_block(v: int, k: int) -> bool:
 	if v < 0 or not grid.buildable(v) or k < 0 or k > CSTown.MAX_LEVEL or town.has(v, k):
 		return false
 	push_history()
+	town.wild_clear(v)
 	town.add(v, k, colour)
 	pop_id = float(v + 1)
 	pop_t0 = time_alive
@@ -500,7 +555,29 @@ func _finish(b: CSBuild) -> Dictionary:
 	pr.build(b)
 	var landings := CFBirds.landings_from(b.mesh) if birds else {}
 	CSProps.add_perches(landings, pr.perches())
-	return {"mesh": m, "shape": shape, "rocks": CSRocks.skirt_mesh(CSRocks.shore_loops(grid, b.land)), "landings": landings, "props": pr, "prop_mm": pr.multimeshes(prop_meshes)}
+	var w := CSWorld.new()
+	w.build(grid, b.town, b.land)
+	var tm := ArrayMesh.new()
+	w.commit(tm, mat_terrain)
+	var rd := CSRoads.new()
+	rd.build(w)
+	var rm := ArrayMesh.new()
+	rd.commit(rm, mat_road)
+	var rshape := ConcavePolygonShape3D.new()
+	rshape.backface_collision = true
+	rshape.set_faces(rd.faces())
+	var sc := CSScatter.new()
+	sc.build(w)
+	var tshape := ConcavePolygonShape3D.new()
+	tshape.backface_collision = true
+	tshape.set_faces(w.faces)
+	var skip := {}
+	for u: int in w.ground:
+		skip[u] = true
+	for u: int in w.deck:
+		skip[u] = true
+	return {"mesh": m, "shape": shape, "rocks": CSRocks.skirt_mesh(CSRocks.shore_loops(grid, b.land, skip)), "landings": landings, "props": pr, "prop_mm": pr.multimeshes(prop_meshes),
+		"world": w, "terrain": tm, "terrain_shape": tshape, "scatter": sc, "scatter_mm": sc.multimeshes(scatter_meshes), "roads": rd, "road_mesh": rm, "road_shape": rshape, "road_mm": rd.multimeshes(road_meshes)}
 
 
 func _start_build() -> void:
@@ -541,6 +618,19 @@ func _apply(b: CSBuild, res: Dictionary, gone: Dictionary = {}) -> void:
 	build = b
 	castle_mi.mesh = res.mesh
 	castle_shape.shape = res.shape
+	world = res.world
+	scatter = res.scatter
+	roads = res.roads
+	road_mi.mesh = res.road_mesh
+	road_shape.shape = res.road_shape
+	var rmm: Array = res.road_mm
+	for i in road_prop_mi.size():
+		(road_prop_mi[i] as MultiMeshInstance3D).multimesh = rmm[i]
+	var sm: Array = res.scatter_mm
+	for i in scatter_mi.size():
+		(scatter_mi[i] as MultiMeshInstance3D).multimesh = sm[i]
+	terrain_mi.mesh = res.terrain
+	terrain_shape.shape = res.terrain_shape
 	rocks_mi.mesh = res.rocks
 	if not gone.is_empty() and props != null:
 		# the props that hung on the blocks just taken away shrink out from where they were
@@ -574,9 +664,21 @@ func pick(mouse: Vector2) -> Dictionary:
 	var dir := cam.project_ray_normal(mouse)
 	var out := {"add": [], "remove": [], "point": Vector3.ZERO}
 	var hit := {}
-	if castle_shape.shape != null and is_inside_tree():
+	if (castle_shape.shape != null or terrain_shape.shape != null) and is_inside_tree():
 		var q := PhysicsRayQueryParameters3D.create(from, from + dir * 2500.0)
 		hit = get_world_3d().direct_space_state.intersect_ray(q)
+	out["wadd"] = -1
+	out["wremove"] = -1
+	if not hit.is_empty() and (hit.collider == terrain_body or hit.collider == road_body):
+		# the landscape: the column under the cursor (a castle click here is a click on the water at that spot)
+		var tp: Vector3 = hit.position
+		out.point = tp
+		var tv := grid.nearest(Vector2(tp.x, tp.z))
+		if tv >= 0:
+			out.wadd = tv if town.top(tv) < 0 else -1
+			out.wremove = _wild_near(Vector2(tp.x, tp.z), tv)
+			out.add = [tv, 0] if not town.has(tv, 0) else [tv, town.top(tv) + 1]
+		return out
 	if hit.is_empty() or build == null:
 		if dir.y >= -1e-4:
 			return out
@@ -585,9 +687,14 @@ func pick(mouse: Vector2) -> Dictionary:
 		var v := grid.nearest(Vector2(p.x, p.z))
 		if v >= 0:
 			out.add = [v, 0] if not town.has(v, 0) else [v, town.top(v) + 1]
+			out.wadd = v if town.top(v) < 0 else -1
+			out.wremove = _wild_near(Vector2(p.x, p.z), v)
 		return out
 	var p: Vector3 = hit.position
 	out.point = p
+	var hn: Vector3 = hit.normal
+	var wv := grid.nearest(Vector2(p.x + hn.x * 1.6, p.z + hn.z * 1.6))
+	out.wadd = wv if wv >= 0 and town.top(wv) < 0 else -1
 	var tri: int = hit.get("face_index", -1)
 	var m := build.mesh
 	if tri < 0 or tri * 3 + 2 >= m.verts.size():
@@ -637,6 +744,81 @@ func pick(mouse: Vector2) -> Dictionary:
 	return out
 
 
+func _wild_near(pt: Vector2, v: int) -> int:
+	## The landscape column nearest to pt among v and its neighbours, or -1.
+	var best := -1
+	var bd := INF
+	for u: int in [v] + Array(grid.nbrs[v]):
+		if not town.has_wild(u):
+			continue
+		var d := grid.verts[u].distance_squared_to(pt)
+		if d < bd:
+			bd = d
+			best = u
+	return best
+
+
+func add_wild(v: int) -> bool:
+	if v < 0 or not grid.buildable(v) or town.top(v) >= 0:
+		return false
+	var land := str(build.land.get(v, "")) if build != null else ""
+	if land == "base" or land == "passage":
+		flash("The castle stands there")
+		return false
+	if land == "court" and build_type != CSTown.T_LAND and build_type != CSTown.T_TREE and build_type != CSTown.T_ROAD:
+		flash("Only land, trees and roads grow in a courtyard")
+		return false
+	var snap := town.to_dict()
+	if not town.wild_add(v, build_type):
+		flash(_wild_refusal(v))
+		return false
+	history.append(snap)
+	if history.size() > HISTORY_MAX:
+		history.pop_front()
+	future.clear()
+	_puff_wild(v, false)
+	mark_changed()
+	return true
+
+
+func remove_wild(v: int) -> bool:
+	if v < 0 or not town.has_wild(v):
+		return false
+	push_history()
+	town.wild_remove(v)
+	_puff_wild(v, true)
+	mark_changed()
+	return true
+
+
+func _wild_refusal(v: int) -> String:
+	match build_type:
+		CSTown.T_LAND:
+			return "That is land already"
+		CSTown.T_ROAD:
+			return "A road does not go through trees" if town.wild_trees(v) > 0 else "A road runs there already"
+		CSTown.T_TREE:
+			return "Trees do not grow in the road" if town.wild_road(v) else "That is a forest already"
+		_:
+			return "As high as it goes"
+
+
+func _puff_wild(v: int, gone: bool) -> void:
+	if life == null or shot_path != "":
+		return
+	var p := grid.verts[v]
+	var y := world.height_at(p) if world != null else 0.6
+	life.puff(Vector3(p.x, maxf(y, 0.2) + 0.5, p.y), world != null and not world.is_land(v) and not gone)
+
+
+func set_build_type(t: int) -> void:
+	build_type = posmod(t, CSTown.TYPE_NAMES.size())
+	ghost_mi.set_meta("key", "")
+	if ui:
+		ui.refresh()
+	flash("Build: " + str(CSTown.TYPE_NAMES[build_type]))
+
+
 func _held_above(v: int, k: int) -> Array:
 	## The lowest block of v's column at level k or above (what an arch, a pillar or corbels at level k hold up).
 	for kk in range(maxi(k, 0), CSTown.MAX_LEVEL + 1):
@@ -656,6 +838,9 @@ func _inside_cell(v: int, pt: Vector2, margin: float) -> bool:
 
 
 func _update_ghost() -> void:
+	if build_type != CSTown.T_CASTLE and not press.has(MOUSE_BUTTON_RIGHT):
+		_update_wild_ghost()
+		return
 	var target: Array = hover.get("remove", []) if press.has(MOUSE_BUTTON_RIGHT) else hover.get("add", [])
 	if target.is_empty() or (press.has(MOUSE_BUTTON_LEFT) and press[MOUSE_BUTTON_LEFT].moved) or ui.mouse_over_ui():
 		ghost_mi.visible = false
@@ -667,6 +852,30 @@ func _update_ghost() -> void:
 	if ghost_mi.get_meta("key", "") != key:
 		ghost_mi.set_meta("key", key)
 		ghost_mi.mesh = _prism(grid.dual(v), CSBuild.level_y_static(k) + 0.02, CSBuild.level_y_static(k + 1) - 0.02, 0.15)
+	ghost_mi.visible = true
+
+
+func _update_wild_ghost() -> void:
+	var v := int(hover.get("wadd", -1))
+	if v < 0 or (press.has(MOUSE_BUTTON_LEFT) and press[MOUSE_BUTTON_LEFT].moved) or ui.mouse_over_ui():
+		ghost_mi.visible = false
+		return
+	var key := "w%d:%d:%d" % [v, build_type, town.wild_heights(v).length() * 10 + town.wild_trees(v)]
+	if ghost_mi.get_meta("key", "") != key:
+		ghost_mi.set_meta("key", key)
+		var ground_y := 0.6 + (world.altitude(v) if world != null else 0.0)
+		var top := ground_y
+		match build_type:
+			CSTown.T_LAND, CSTown.T_ROAD:
+				top = ground_y + 0.25
+			CSTown.T_TREE:
+				top = ground_y + 0.5 + 1.6 * float(town.wild_trees(v) + 1)
+			CSTown.T_ROCK:
+				top = ground_y + CSWorld.RK_LEVEL
+			CSTown.T_MOUNTAIN:
+				top = ground_y + CSWorld.MT_LEVEL
+		ghost_mi.mesh = _prism(grid.dual(v), ground_y - 0.05, top, 0.2)
+	ghost_mat.albedo_color = Color(1, 1, 1, 0.38)
 	ghost_mi.visible = true
 
 
@@ -699,12 +908,18 @@ func _prism(poly: PackedVector2Array, y0: float, y1: float, shrink: float) -> Ar
 
 func frame_town(snap: bool) -> void:
 	var cols := town.columns()
+	for v: int in town.wild_columns():
+		if not cols.has(v):
+			cols.append(v)
 	var lo := Vector3(INF, 0.0, INF)
 	var hi := Vector3(-INF, 0.0, -INF)
 	for v: int in cols:
 		var p := grid.verts[v]
 		lo = Vector3(minf(lo.x, p.x), 0.0, minf(lo.z, p.y))
-		hi = Vector3(maxf(hi.x, p.x), maxf(hi.y, CSBuild.level_y_static(town.top(v) + 1)), maxf(hi.z, p.y))
+		var top_y := CSBuild.level_y_static(town.top(v) + 1)
+		if town.has_wild(v):
+			top_y = maxf(top_y, 0.6 + float(town.wild_heights(v).length()) * 3.0 + 3.0)
+		hi = Vector3(maxf(hi.x, p.x), maxf(hi.y, top_y), maxf(hi.z, p.y))
 	if cols.is_empty():
 		cam_goal = Vector3.ZERO
 		cam_dist = 70.0
@@ -832,13 +1047,20 @@ func _unhandled_input(event: InputEvent) -> void:
 			if info.is_empty() or info.moved:
 				return
 			if e.button_index == MOUSE_BUTTON_LEFT:
-				var a: Array = pick(e.position).get("add", [])
-				if not a.is_empty():
-					add_block(a[0], a[1])
+				var pk := pick(e.position)
+				if build_type == CSTown.T_CASTLE:
+					var a: Array = pk.get("add", [])
+					if not a.is_empty():
+						add_block(a[0], a[1])
+				else:
+					add_wild(int(pk.get("wadd", -1)))
 			elif e.button_index == MOUSE_BUTTON_RIGHT:
-				var r: Array = pick(e.position).get("remove", [])
+				var pr := pick(e.position)
+				var r: Array = pr.get("remove", [])
 				if not r.is_empty():
 					remove_block(r[0], r[1])
+				else:
+					remove_wild(int(pr.get("wremove", -1)))
 	elif event is InputEventMouseMotion:
 		var m := event as InputEventMouseMotion
 		last_mouse = m.position
@@ -890,6 +1112,10 @@ func _key(e: InputEventKey) -> void:
 			toggle_birds()
 		KEY_P:
 			toggle_props()
+		KEY_TAB:
+			set_build_type(build_type + (-1 if e.shift_pressed else 1))
+		KEY_F1, KEY_F2, KEY_F3, KEY_F4, KEY_F5, KEY_F6:
+			set_build_type(e.keycode - KEY_F1)
 		KEY_L:
 			look.cycle_look()
 			flash("Light: " + look.look_name())

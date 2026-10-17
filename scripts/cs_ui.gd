@@ -22,6 +22,8 @@ var b_light: Button
 var b_quality: Button
 var b_pen: Button
 var b_infill: Button
+var type_bar: PanelContainer
+var type_btns: Array = []
 var castles_menu: MenuButton
 var status: Label
 var stats: Label
@@ -110,6 +112,22 @@ func _ready() -> void:
 		main.look.cycle_infill()
 		refresh())
 	hb.add_child(b_infill)
+	# what a click builds
+	type_bar = PanelContainer.new()
+	root.add_child(type_bar)
+	var th_box := HBoxContainer.new()
+	th_box.add_theme_constant_override("separation", 4)
+	type_bar.add_child(th_box)
+	for ti in CSTown.TYPE_NAMES.size():
+		var tb := Button.new()
+		tb.text = "%s" % CSTown.TYPE_NAMES[ti]
+		tb.tooltip_text = "Build %s (F%d, Tab)" % [str(CSTown.TYPE_NAMES[ti]).to_lower(), ti + 1]
+		tb.focus_mode = Control.FOCUS_NONE
+		tb.toggle_mode = false
+		var tix := ti
+		tb.pressed.connect(func(): main.set_build_type(tix))
+		th_box.add_child(tb)
+		type_btns.append(tb)
 	# the colours
 	swatch_bar = PanelContainer.new()
 	root.add_child(swatch_bar)
@@ -131,7 +149,7 @@ func _ready() -> void:
 		sh.add_child(b)
 		swatches.append(b)
 	help = Label.new()
-	help.text = "Click: put a block  ·  Right-click: take one away  ·  Right-drag: turn  ·  Left- or middle-drag: move  ·  Wheel: zoom  ·  1-0 - =: colour  ·  Ctrl+Z: undo"
+	help.text = "Click: build  ·  Right-click: take away  ·  Tab / F1-F6: castle, land, road, trees, rocks, mountains  ·  Right-drag: turn  ·  Left- or middle-drag: move  ·  Wheel: zoom  ·  Ctrl+Z: undo"
 	help.add_theme_font_size_override("font_size", 13)
 	help.add_theme_color_override("font_color", Color(1, 1, 1, 0.95))
 	help.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.45))
@@ -167,7 +185,7 @@ func _fill_castles() -> void:
 	var pm := castles_menu.get_popup()
 	pm.clear()
 	var labels := {"castle": "Castle with keep and gate", "village": "Village", "tower": "One tower", "harbour": "Harbour and lighthouse",
-		"bridges": "Arches, corbels, pillars and stairs"}
+		"bridges": "Arches, corbels, pillars and stairs", "landscape": "Landscape: mountains, rocks, woods, a road", "kingdom": "Kingdom: castle in its country"}
 	for i in CSStarter.NAMES.size():
 		pm.add_item(labels.get(CSStarter.NAMES[i], CSStarter.NAMES[i]), i)
 	var saved: Array = main.saved_towns()
@@ -188,7 +206,7 @@ func _on_castle(id: int) -> void:
 
 func mouse_over_ui() -> bool:
 	var m := root.get_viewport().get_mouse_position()
-	return top.get_global_rect().has_point(m) or swatch_bar.get_global_rect().has_point(m)
+	return top.get_global_rect().has_point(m) or swatch_bar.get_global_rect().has_point(m) or type_bar.get_global_rect().has_point(m)
 
 
 func refresh() -> void:
@@ -204,6 +222,11 @@ func refresh() -> void:
 		b_quality.text = "Quality: " + main.look.quality_name()
 		b_pen.text = "Pen: " + main.look.pen_name()
 		b_infill.text = "Infill: " + main.look.infill_name()
+	for ti in type_btns.size():
+		var tbn: Button = type_btns[ti]
+		tbn.add_theme_color_override("font_color", Color(0.1, 0.35, 0.65) if ti == main.build_type else INK)
+		tbn.add_theme_color_override("font_hover_color", Color(0.1, 0.35, 0.65) if ti == main.build_type else INK)
+		tbn.add_theme_font_size_override("font_size", 18 if ti == main.build_type else 15)
 	for i in swatches.size():
 		var b: Button = swatches[i]
 		var s: StyleBoxFlat = b.get_theme_stylebox("normal")
@@ -214,6 +237,8 @@ func refresh() -> void:
 func tick(_delta: float) -> void:
 	var vs := root.get_viewport_rect().size
 	swatch_bar.position = Vector2((vs.x - swatch_bar.size.x) * 0.5, vs.y - swatch_bar.size.y - 34)
+	type_bar.position = Vector2((vs.x - type_bar.size.x) * 0.5, swatch_bar.position.y - type_bar.size.y - 8)
+	swatch_bar.modulate = Color(1, 1, 1, 1.0 if main.build_type == CSTown.T_CASTLE else 0.45)
 	help.position = Vector2(16, vs.y - 26)
 	status.size = Vector2(vs.x, 24)
 	status.position = Vector2(0, 64)

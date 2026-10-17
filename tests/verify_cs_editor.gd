@@ -260,6 +260,65 @@ func _run() -> void:
 				good = true
 				break
 		ok(good, "a pillar offers the empty cell it stands in and the block it carries (%s)" % seen)
+	# the landscape: pick a build type, click land, trees, a road and a mountain onto the sea, right-click them away, undo
+	main.load_starter("castle")
+	await _settle()
+	var ui2: CSUi = main.ui
+	await _click((ui2.type_btns[CSTown.T_LAND] as Button).get_global_rect().get_center())
+	ok(main.build_type == CSTown.T_LAND, "the Land button picks the land")
+	var lv := -1
+	var lbest := INF
+	for v in grid.verts.size():
+		if not grid.buildable(v) or town.top(v) >= 0 or town.has_wild(v):
+			continue
+		var d2 := grid.verts[v].length()
+		if d2 < 26.0 or d2 > 34.0:
+			continue
+		var sc := _screen(Vector3(grid.verts[v].x, 0.6, grid.verts[v].y))
+		if not _safe(sc) or (main.cam as Camera3D).is_position_behind(Vector3(grid.verts[v].x, 0.6, grid.verts[v].y)):
+			continue
+		var sco := sc.distance_to(Vector2(vs.x * 0.5, vs.y * 0.62))
+		if sco < lbest:
+			lbest = sco
+			lv = v
+	ok(lv >= 0, "found a free spot for land in view")
+	if lv >= 0:
+		var lp := grid.verts[lv]
+		var lscreen := _screen(Vector3(lp.x, 0.0, lp.y))
+		var blocks0 := town.size()
+		await _click(lscreen)
+		await _settle()
+		ok(town.wild_is_ground(lv) and town.size() == blocks0, "a click with Land picked puts land there and no block")
+		main.set_build_type(CSTown.T_TREE)
+		var lscr2 := _screen(Vector3(lp.x, main.world.height_at(lp) + 0.1, lp.y))
+		await _click(lscr2)
+		await _settle()
+		ok(town.wild_trees(lv) == 1, "Trees: a click plants a tree (%d)" % town.wild_trees(lv))
+		await _click(lscr2)
+		await _settle()
+		ok(town.wild_trees(lv) == 2 and main.scatter.inst.size() > 0, "a second click grows a grove, and the trees stand on screen (%d instances)" % main.scatter.inst.size())
+		main.set_build_type(CSTown.T_ROAD)
+		await _click(lscr2)
+		await _settle()
+		ok(not town.wild_road(lv), "a road is refused where trees stand")
+		await _click(lscr2, MOUSE_BUTTON_RIGHT)
+		await _click(lscr2, MOUSE_BUTTON_RIGHT)
+		await _settle()
+		ok(town.wild_trees(lv) == 0 and town.wild_is_ground(lv), "right-clicks take the trees away and leave the land")
+		await _click(lscr2)
+		await _settle()
+		ok(town.wild_road(lv), "then the road goes down")
+		main.set_build_type(CSTown.T_MOUNTAIN)
+		await _click(lscr2)
+		await _settle()
+		ok(town.wild_heights(lv) == "m" and main.world.altitude(lv) > 3.0, "a mountain click raises the column (%.1f m)" % main.world.altitude(lv))
+		await _key(KEY_Z, true)
+		await _settle()
+		ok(town.wild_heights(lv) == "", "Ctrl+Z takes the mountain level back")
+		main.set_build_type(CSTown.T_CASTLE)
+		await _click(lscr2)
+		await _settle()
+		ok(town.top(lv) >= 0 and not town.has_wild(lv), "a castle block on a landscape column replaces what was there")
 	_end()
 
 

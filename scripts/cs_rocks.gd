@@ -21,7 +21,7 @@ static func _n() -> FastNoiseLite:
 	return _noise
 
 
-static func shore_loops(grid: CSGrid, land: Dictionary) -> Array:
+static func shore_loops(grid: CSGrid, land: Dictionary, skip_nb: Dictionary = {}) -> Array:
 	## [{"pts": PackedVector2Array, "skip": PackedByteArray}]: closed loops round the land, outward normal = (d.y, -d.x).
 	var next := {}
 	for v: int in land:
@@ -30,7 +30,7 @@ static func shore_loops(grid: CSGrid, land: Dictionary) -> Array:
 			if land.has(nb[i]):
 				continue
 			var f := grid.face(v, i)
-			next[f[0]] = [f[1], 1 if str(land[v]) == "passage" else 0]
+			next[f[0]] = [f[1], 1 if (str(land[v]) == "passage" or skip_nb.has(nb[i])) else 0]
 	var out := []
 	var guard := 0
 	while not next.is_empty() and guard < 20000:

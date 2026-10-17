@@ -36,6 +36,8 @@ func _init() -> void:
 	_birds()
 	print("== props")
 	_props()
+	print("== landscape")
+	_landscape()
 	print("== look")
 	_look()
 	print("== rocks and sea floor")
@@ -309,7 +311,7 @@ func _audit(t: CSTown, label: String, strict: bool) -> Dictionary:
 		if is_nan(p.x) or is_nan(p.y) or is_nan(p.z):
 			nan = true
 			break
-	ok(not nan and b.mesh.tri_count() > 0, "%s: a finite mesh (%d tris)" % [label, b.mesh.tri_count()])
+	ok(not nan and (b.mesh.tri_count() > 0 or label == "landscape"), "%s: a finite mesh (%d tris)" % [label, b.mesh.tri_count()])
 	if strict:
 		ok(int(au.open_other) == 0 and int(au.non_manifold) == 0 and int(au.flipped) == 0 and int(au.t_junctions) == 0,
 			"%s: closed (open %d, non-manifold %d, flipped %d, T %d)" % [label, int(au.open_other), int(au.non_manifold), int(au.flipped), int(au.t_junctions)])
@@ -395,6 +397,157 @@ func _in_solid(b: CSBuild, p: Vector3) -> bool:
 		if p.y < CSBuild.B and b.land.has(u) and Geometry2D.is_point_in_polygon(q, grid.dual(u)):
 			return true
 	return false
+
+
+func _country(name: String) -> Array:
+	var t := CSTown.new()
+	CSStarter.make(name, grid, t)
+	var b := CSBuild.new()
+	b.build(grid, t)
+	var w := CSWorld.new()
+	w.build(grid, t, b.land)
+	var rd := CSRoads.new()
+	rd.build(w)
+	var sc := CSScatter.new()
+	sc.build(w)
+	return [t, b, w, rd, sc]
+
+
+func _free_column(t: CSTown, land := true) -> int:
+	for v in grid.verts.size():
+		if grid.buildable(v) and t.top(v) < 0 and not t.has_wild(v):
+			return v
+	return -1
+
+
+func _landscape() -> void:
+	# the column rules
+	var t := CSTown.new()
+	var v := grid.nearest(Vector2(60.0, 0.0))
+	ok(t.wild_add(v, CSTown.T_LAND) and not t.wild_add(v, CSTown.T_LAND), "land goes down once")
+	ok(t.wild_add(v, CSTown.T_TREE) and t.wild_add(v, CSTown.T_TREE) and t.wild_add(v, CSTown.T_TREE) and not t.wild_add(v, CSTown.T_TREE), "trees: a tree, a grove, a forest, no more")
+	ok(not t.wild_add(v, CSTown.T_ROAD), "a road does not go through trees")
+	var u: int = grid.nbrs[v][0]
+	ok(t.wild_add(u, CSTown.T_LAND) and t.wild_add(u, CSTown.T_ROAD) and not t.wild_add(u, CSTown.T_TREE), "trees do not grow in a road")
+	var w2: int = grid.nbrs[v][1]
+	for i in CSTown.MAX_HEIGHT:
+		t.wild_add(w2, CSTown.T_MOUNTAIN if i % 2 == 0 else CSTown.T_ROCK)
+	ok(t.wild_heights(w2) == "mrmrmr" and not t.wild_add(w2, CSTown.T_ROCK), "mountain and rock levels stack in the order built, up to %d" % CSTown.MAX_HEIGHT)
+	var d := t.to_dict()
+	var t2 := CSTown.new()
+	t2.from_dict(d)
+	ok(t2.wild_heights(w2) == "mrmrmr" and t2.wild_trees(v) == 3 and t2.wild_road(u), "the landscape survives a save round trip")
+	ok(t.wild_remove(v) and t.wild_trees(v) == 2, "a right-click takes the top tree level first")
+	t.wild_remove(v)
+	t.wild_remove(v)
+	t.wild_remove(v)
+	ok(not t.has_wild(v), "then the land, then the column is gone")
+	# a castle block pushes the landscape out of its column
+	var a := CSTown.new()
+	var c := grid.nearest(Vector2.ZERO)
+	a.wild_add(c, CSTown.T_LAND)
+	ok(a.top(c) < 0 and a.has_wild(c), "land stands where no block does")
+	# the whole country
+	var k := _country("kingdom")
+	var kt: CSTown = k[0]
+	var kb: CSBuild = k[1]
+	var kw: CSWorld = k[2]
+	var kr: CSRoads = k[3]
+	var ks: CSScatter = k[4]
+	ok(kw.ground.size() > 80, "the kingdom has ground (%d columns)" % kw.ground.size())
+	var peak := 0.0
+	var bad := 0
+	for u2: int in kw.corner:
+		var h: float = kw.corner[u2]
+		if not is_finite(h) or h < -0.01 or h > 40.0:
+			bad += 1
+	for u3: int in kw.ground:
+		peak = maxf(peak, kw.altitude(u3))
+	ok(bad == 0, "every terrain corner is a sane height")
+	ok(peak > 8.0, "the mountains rise above the tree line (%.1f m)" % peak)
+	ok(kw.stats.tris > 500, "the terrain is a mesh (%d triangles)" % kw.stats.tris)
+	# flush with the castle: a corner that touches castle land is at its floor height
+	var flush := true
+	for u4: int in kw.ground:
+		for q in grid.rings[u4]:
+			if q < 0:
+				continue
+			for i in 4:
+				var cc := grid.quads[q * 4 + i]
+				if kb.land.has(cc) and kw.corner.has(q) and absf(float(kw.corner[q])) > 0.001:
+					flush = false
+	ok(flush, "land is flat where it meets the castle")
+	ok(absf(kw.height_at(Vector2(1000.0, 1000.0)) - CSWorld.G) < 1e-5, "height_at is the ground height away from the landscape")
+	var sample := kw.ground.keys()[0] as int
+	var hp := kw.height_at(grid.verts[sample])
+	ok(is_finite(hp) and hp >= CSWorld.G - 0.5, "height_at answers on a ground column (%.2f)" % hp)
+	# what grows where depends on what is round it
+	var kinds := {}
+	for u5: int in ks.species:
+		kinds[ks.species[u5]] = int(kinds.get(ks.species[u5], 0)) + 1
+	ok(kinds.has("pine") and kinds.has("oak") or kinds.has("forest"), "the kingdom grows more than one kind of tree (%s)" % str(kinds))
+	var pine_low := 0
+	var oak_high := 0
+	for u6: int in ks.species:
+		if ks.species[u6] == "pine" and kw.altitude(u6) < 1.0 and kw.ctx(u6).mount == 0 and kw.ctx(u6).rock == 0:
+			pine_low += 1
+		if ks.species[u6] == "oak" and kw.altitude(u6) > 4.5:
+			oak_high += 1
+	ok(oak_high == 0, "no oak on high ground")
+	var above := 0
+	for it: Array in ks.inst:
+		var tf: Transform3D = it[1]
+		if int(it[0]) <= CSScatter.M_ORCHARD and tf.origin.y - CSWorld.G > CSScatter.TREE_LINE + 0.8:
+			above += 1
+	ok(above == 0, "no tree stands above the tree line (%d)" % above)
+	var clash := 0
+	for it: Array in ks.inst:
+		var tf2: Transform3D = it[1]
+		if int(it[0]) <= CSScatter.M_ORCHARD and not kw.road_clear(Vector2(tf2.origin.x, tf2.origin.z), 1.0):
+			clash += 1
+	ok(clash == 0, "no tree stands in a road (%d)" % clash)
+	ok(int(ks.counts.get("boulder", 0)) + int(ks.counts.get("crag", 0)) + int(ks.counts.get("block", 0)) > 5, "rocks lie on the rock columns and mountain slopes (%s)" % str(ks.counts))
+	# roads: one piece per neighbour pattern
+	var rt := CSTown.new()
+	var rc := grid.nearest(Vector2(60.0, 0.0))
+	var arms := [rc] + Array(grid.nbrs[rc])
+	for x: int in arms:
+		rt.wild_add(x, CSTown.T_LAND)
+	for x: int in arms.slice(0, 4):
+		rt.wild_add(x, CSTown.T_ROAD)
+	var rb := CSBuild.new()
+	rb.build(grid, rt)
+	var rw := CSWorld.new()
+	rw.build(grid, rt, rb.land)
+	var rr := CSRoads.new()
+	rr.build(rw)
+	var classes := {}
+	for x2: int in rr.info:
+		classes[(rr.info[x2] as Dictionary).cls] = true
+	ok(classes.has("junction") or classes.has("through") or classes.has("dead"), "roads classify by their neighbours (%s)" % str(classes.keys()))
+	ok(not rr.info.is_empty() and rw.road_segs.size() > 0, "a road lays its ribbon and marks where it runs")
+	# a road over water is a jetty, then a bridge
+	var wt := CSTown.new()
+	var wc := grid.nearest(Vector2(60.0, 0.0))
+	wt.wild_add(wc, CSTown.T_LAND)
+	var over := int(grid.nbrs[wc][0])
+	var over2 := int(grid.nbrs[over][0])
+	wt.wild_add(over, CSTown.T_ROAD)
+	var wb := CSBuild.new()
+	wb.build(grid, wt)
+	var ww := CSWorld.new()
+	ww.build(grid, wt, wb.land)
+	var wr := CSRoads.new()
+	wr.build(ww)
+	ok(ww.deck.has(over) and str((wr.info[over] as Dictionary).cls) in ["jetty", "bridge"], "a road with no earth under it is a jetty or a bridge")
+	# determinism
+	var k2 := _country("kingdom")
+	ok((k2[4] as CSScatter).inst.size() == ks.inst.size() and (k2[3] as CSRoads).counts == kr.counts, "the same castle and country give the same trees, rocks and roads")
+	# a landscape build is quick
+	var t0 := Time.get_ticks_msec()
+	_country("kingdom")
+	var ms := Time.get_ticks_msec() - t0
+	ok(ms < 1500, "castle and country built in %d ms" % ms)
 
 
 func _look() -> void:
