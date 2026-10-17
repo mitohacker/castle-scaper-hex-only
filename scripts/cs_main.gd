@@ -881,6 +881,11 @@ func _key(e: InputEventKey) -> void:
 				flash("Pen: " + look.pen_name())
 				if ui:
 					ui.refresh()
+		KEY_I:
+			look.cycle_infill()
+			flash("Infill: " + look.infill_name())
+			if ui:
+				ui.refresh()
 		KEY_B:
 			toggle_birds()
 		KEY_P:

@@ -123,6 +123,18 @@ func _run() -> void:
 	ok(_spread() > 0.03, "the picture has content with the pen on full")
 	await _key(KEY_N)
 	ok(look.pen_id == "off" and not main.pen.enabled, "N wraps round to off")
+	# every infill medium draws something and leaves the frame alive, on light and on full
+	look.pen_id = "light"
+	for iid: String in CSLook.INFILL_IDS:
+		look.infill_id = iid
+		look.apply()
+		await _wait(6)
+		ok(main.pen.style == CSLook.INFILL_IDS.find(iid), "infill %s reaches the pen pass" % iid)
+		ok(_spread() > 0.03, "infill %s: the picture has content" % iid)
+	await _key(KEY_I)
+	ok(look.infill_id == "pencil", "I wraps round the infills to the first (%s)" % look.infill_id)
+	look.pen_id = "off"
+	look.apply()
 	# overrides
 	look._overrides = {"exposure": 0.5}
 	look.apply()

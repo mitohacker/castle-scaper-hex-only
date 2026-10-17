@@ -21,6 +21,7 @@ var b_spin: Button
 var b_light: Button
 var b_quality: Button
 var b_pen: Button
+var b_infill: Button
 var castles_menu: MenuButton
 var status: Label
 var stats: Label
@@ -105,6 +106,10 @@ func _ready() -> void:
 		main.look.cycle_pen()
 		refresh())
 	hb.add_child(b_pen)
+	b_infill = _btn("Infill", "What the Pen colours the castle in with: colour pencil, watercolour, marker, crayon, stipple, scribble, gouache, ink wash, none (I)", func():
+		main.look.cycle_infill()
+		refresh())
+	hb.add_child(b_infill)
 	# the colours
 	swatch_bar = PanelContainer.new()
 	root.add_child(swatch_bar)
@@ -198,6 +203,7 @@ func refresh() -> void:
 		b_light.text = "Light: " + main.look.look_name()
 		b_quality.text = "Quality: " + main.look.quality_name()
 		b_pen.text = "Pen: " + main.look.pen_name()
+		b_infill.text = "Infill: " + main.look.infill_name()
 	for i in swatches.size():
 		var b: Button = swatches[i]
 		var s: StyleBoxFlat = b.get_theme_stylebox("normal")

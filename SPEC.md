@@ -231,6 +231,15 @@ that eats the stroke; coloured with the surrounding area's own colour (an 8-tap 
 36 degrees in the deeper tones; plus a faint flat tint under the strokes. Light uses 0.9, Full 1.3. Screen space, because pencil sits on the paper and
 must look the same at any zoom (it does not move with the stone: pencil strokes slide a little under camera motion). Measured on High, quiet GPU: Light 173 fps, Full 170.
 
+**Infill styles (Kevin: "can we have all different types of infills? as options"):** the Pen's infill is now a setting of its own (key **I**, the top bar's
+Infill button, saved, `--cs-infill=`; `CSLook.INFILL_IDS`, `CSPen.style` -> push constant `d.w`). Nine: **Colour pencil** (fine directional strokes, tooth, cross
+layer in the shade), **Watercolour** (a soft transparent wash pooled in blotches, pigment granulating in the paper, light lifted out), **Marker** (wide hard-edged
+see-through strokes, darker where two overlap), **Crayon** (thick waxy strokes catching only the paper's peaks), **Stipple** (dots, more and bigger in the dark),
+**Scribble** (looping lines, close in the dark and open in the light), **Gouache** (opaque flat tones in five bands with dry-brush streaks), **Ink wash**
+(sepia brush tones with pooled edges) and **No infill** (outlines and hatching only). All take the area's own colour (`ring_mean`, 7-15 px), follow the form where
+they have a direction (`stroke_layer`, the contour of the inverse depth), and are drawn in screen space. Pictures: `castle-scaper-realistic-art/reference/infills/`.
+Frame rates measured per infill ranged 64-146 fps on High with another program on the GPU: not a ranking.
+
 ## 7. The editor (`scripts/cs_main.gd`, `scripts/cs_ui.gd`)
 
 | input | does |
