@@ -69,7 +69,7 @@ func _ready() -> void:
 	hb.add_theme_constant_override("separation", 2)
 	top.add_child(hb)
 	var title := Label.new()
-	title.text = "Castle Scaper  "
+	title.text = "Castle Scaper Realistic  "
 	title.add_theme_font_size_override("font_size", 17)
 	hb.add_child(title)
 	hb.add_child(_btn("New", "An empty sea (Ctrl+N)", func(): main.new_town()))
