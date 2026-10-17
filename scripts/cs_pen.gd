@@ -18,7 +18,7 @@ layout(push_constant, std430) uniform Params {
 	vec4 a;      // width, height, time, ink
 	vec4 b;      // pencil, pen width, density, creases
 	vec4 c;      // projection a, projection b, tan half fov x, tan half fov y
-	vec4 d;      // sea level, 0, 0, 0
+	vec4 d;      // sea level, hatch, wash, 0
 	vec4 right;
 	vec4 up;
 	vec4 back;
@@ -100,7 +100,9 @@ void main() {
 	if (dir.y < -0.0005) {
 		tsea = (P.d.x - P.pos.y) / dir.y;
 		float dist_scene = z0 / max(dot(dir, -P.back.xyz), 0.05);
-		sea = sky || tsea < dist_scene - 0.3 || z0 > 400.0;
+		// a solid pixel is water when its world height is within a wave's reach of the sea level (the water writes depth too)
+		float wy = P.pos.y + dir.y * dist_scene;
+		sea = sky || wy < P.d.x + 0.55 || z0 > 400.0;
 	}
 	bool open_air = sky || sea;
 
@@ -192,6 +194,39 @@ void main() {
 		float grain = 0.55 + 0.45 * h21(floor(fp / max(sc, 1.0)) + t * 0.0);
 		pcov *= grain * pencil;
 	}
+	// ---- on the castle (anything solid above the water): pen hatching in the shadows and a coloured-pencil wash over the lit walls and roofs.
+	// Both are laid in WORLD space (stripes of planes through the scene), so they stay on the stone when the camera moves, and they fade out
+	// into a flat tone when a stroke gets thinner than a few pixels.
+	if (!open_air && z0 < 1e5 && (P.d.y > 0.0 || P.d.z > 0.0)) {
+		float dist = z0 / max(dot(dir, -P.back.xyz), 0.05);
+		vec3 W = P.pos.xyz + dir * dist;
+		float pf = max(dist * ang_px, 1e-4);                            // metres per pixel here
+		float l = lum(col.rgb);
+		// shadow hatching: strokes along one diagonal, cross strokes in the deepest shade
+		float dark = 1.0 - smoothstep(0.05, 0.4, l);
+		float sp = 0.16;
+		float seen = smoothstep(2.2, 4.0, sp / pf);
+		float ph1 = dot(W, normalize(vec3(0.55, -1.0, 0.45))) / sp + 0.45 * vn(W.xz * 1.3 + W.y * 0.9);
+		float st1 = 1.0 - smoothstep(0.5 * (0.22 + 0.2 * dark), 0.5 * (0.32 + 0.3 * dark), abs(fract(ph1) - 0.5));
+		st1 *= step(0.28, vn(vec2(floor(ph1) * 1.7, dot(W, vec3(0.8, 0.2, -0.6)) * 0.9)) + 0.18 * dark);    // strokes start and stop
+		float ph2 = dot(W, normalize(vec3(-0.5, -0.9, 0.5))) / (sp * 1.15) + 0.6 * vn(W.zx * 1.1);
+		float st2 = 1.0 - smoothstep(0.1, 0.17, abs(fract(ph2) - 0.5));
+		float cover = st1 * smoothstep(0.1, 0.45, dark) + st2 * smoothstep(0.55, 0.9, dark);
+		cover = mix(0.3 * dark, cover, seen);
+		vec3 ink_col = vec3(0.03, 0.03, 0.05);
+		col.rgb = mix(col.rgb, ink_col, clamp(cover * P.d.y * 0.7, 0.0, 0.85));
+		// pencil wash: broad strokes that pull the surface's own colour a little further, lighter and warmer where it is lit
+		float spw = 0.07;
+		float seenw = smoothstep(2.0, 3.5, spw / pf);
+		float phw = dot(W, normalize(vec3(0.7, -0.45, 0.55))) / spw + 0.5 * vn(W.xz * 0.7 + W.y * 0.5);
+		float tone = h21(vec2(floor(phw), floor(dot(W, vec3(0.6, 0.3, -0.7)) * 0.6)));
+		float sw = 1.0 - smoothstep(0.30, 0.5, abs(fract(phw) - 0.5));
+		sw *= smoothstep(0.2, 0.55, vn(vec2(floor(phw) * 3.1, dot(W, vec3(0.8, 0.2, -0.6)) * 0.5)));
+		vec3 sat = mix(vec3(l), col.rgb, 1.7) * (0.9 + 0.35 * tone);
+		float lit = smoothstep(0.1, 0.5, l);
+		col.rgb = mix(col.rgb, sat, clamp(sw * seenw * P.d.z * (0.35 + 0.35 * lit), 0.0, 0.7));
+		col.rgb *= 1.0 + P.d.z * (h21(floor(fp)) - 0.5) * 0.06;                   // paper grain
+	}
 	col.rgb = mix(col.rgb, pow(pcol, vec3(2.2)), clamp(pcov, 0.0, 1.0) * 0.9);
 	col.rgb = mix(col.rgb, vec3(0.025, 0.025, 0.035), clamp(line * ink, 0.0, 1.0));
 	imageStore(color_image, px, col);
@@ -264,7 +299,7 @@ func _render_callback(p_type: int, p_render_data: RenderData) -> void:
 		float(size.x), float(size.y), time, 0.9 if light else 1.0,
 		0.85 if light else 1.0, 1.0 if light else 1.5, 1.0 if light else 1.8, 0.0 if light else 1.0,
 		proj.z.z, proj.w.z, 1.0 / absf(proj.x.x), 1.0 / absf(proj.y.y),
-		0.0, 0.0, 0.0, 0.0,
+		0.0, 0.55 if light else 1.0, 0.6 if light else 1.0, 0.0,
 		tf.basis.x.x, tf.basis.x.y, tf.basis.x.z, 0.0,
 		tf.basis.y.x, tf.basis.y.y, tf.basis.y.z, 0.0,
 		tf.basis.z.x, tf.basis.z.y, tf.basis.z.z, 0.0,

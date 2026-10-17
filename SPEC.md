@@ -218,8 +218,12 @@ difference), one wobbly horizon line, dashed cloud edges (from the sky's brightn
 the sky (pinned to the sky dome by the view direction) and long wavy strokes on the sea (pinned to the water plane by the ray-plane hit, two crossing
 sets, fading out by 700 m), in lilac / blue / white / grey and teal / white / blue, never on the castle (the sea strokes stop at anything solid in front
 of the water). No ink under the water (the sea floor's far edge drew a second horizon). Cost: High 151 -> 143 fps. Compared with the two starred pictures
-in `castle-scaper-realistic-art/reference/compare/pen_*.jpg`. Not matched: the mock-up's hatching in shadow and its colour-pencil wash over the walls;
-the game draws only lines on the castle (a stroke texture for walls and roofs would need a UV or screen-space pencil layer).
+in `castle-scaper-realistic-art/reference/compare/pen_*.jpg`. Round 2 of the pen (same day, Kevin: "yes, do" the hatching and wash): on every solid pixel above the water the pass now also draws **pen hatching in the
+shadows** (diagonal strokes, cross strokes in the deepest shade, by luminance) and a **coloured-pencil wash** over the lit walls and roofs (broad strokes that
+pull the surface's own colour further, a paper grain), both laid in WORLD space (planes through the reconstructed world position, so they stay on the stone
+when the camera moves) and faded into a flat tone when a stroke is under ~3 px. Light = hatch 0.55 / wash 0.6, Full = 1.0 / 1.0 (heavier line, creases,
+more scribbles). A solid pixel counts as water when its world height is within 0.55 m of the sea level (the water writes depth too: a ray-plane test
+misclassified wave troughs and hatched the sea). Cost on High: 152 fps with Light, 115 with Full (Off 151 before; Light costs little).
 
 ## 7. The editor (`scripts/cs_main.gd`, `scripts/cs_ui.gd`)
 
