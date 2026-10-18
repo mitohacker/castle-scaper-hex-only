@@ -2,9 +2,10 @@
 
 Castle Scaper Realistic on an **organic hex grid**: a copy of `castle-scaper-realistic` (2026-10-18, Kevin: "duplicate castle-scaper-realistic
 and experiment with a hex grid for an organic grid instead of the cube grids we have now ... just do hex grid organic randomness and build
-castles and let me see how it looks"). Every cell is a hexagon, pentagon or heptagon (42 / 29 / 29 %; `--cs-flip=0.05` for the calmer first try, 68 % hexagons), warped by relaxation, so towers are
+castles and let me see how it looks"). Every cell is a hexagon (all of them: no pentagons or heptagons), irregular because every point of the lattice is nudged a little (`--cs-jitter=`, 0 is a perfect lattice), so towers are
 hexagonal prisms and walls zig-zag; every cell corner is shared by three cells that all touch, so two blocks never meet at only a corner.
-See SPEC section 0. Picture: `shots/hex_gallery.jpg`.
+See SPEC section 0. `shots/hex_grid_plan.svg` is a plan of the cells (every one a hexagon). The other `shots/hex_*` pictures, `hex_gallery.jpg` among them,
+were rendered before the flips were removed (their coasts still show pentagons and heptagons): re-take them with `tools/shots.ps1`.
 
 The rest is Castle Scaper Realistic's:
 
@@ -28,9 +29,10 @@ verify-castle-scaper-hex.bat      :: compile, core suite (headless), editor suit
 | | |
 |---|---|
 | left click | put a block (on the sea, on top, or beside: the face under the mouse decides) |
+| **left drag** | **paint**: hold the button and move, and a block goes on every new cell the mouse passes over (not stacked on what the stroke just built); one Ctrl+Z takes the whole stroke back |
 | right click | take it away |
 | W A S D (arrows) / Q E / Shift | move the view across the map / turn it / three times faster |
-| right drag / left or middle drag / wheel | turn / move / zoom |
+| right drag / middle drag / wheel | turn / move / zoom (a left drag paints, so it no longer moves the view; a right drag turns, so there is no drag-to-remove: right-click each block) |
 | 1-0 - = or the swatches | material |
 | Ctrl+Z / Ctrl+Y / Ctrl+S / Ctrl+N | undo / redo / save / empty sea |
 | L / G | the light: golden hour, overcast, bright noon, dusk / the quality: low, medium, high, ultra |

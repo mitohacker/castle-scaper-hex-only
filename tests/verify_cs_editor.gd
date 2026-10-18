@@ -1,8 +1,8 @@
 extends SceneTree
 ## The editor driven like a player (windowed, through the memory guard): real mouse and key events pushed into the
 ## window, the castle building on its worker thread. A click on the sea puts a block down, a click on its roof stacks
-## another, a right-click takes it away, Ctrl+Z / Ctrl+Y undo and redo, a drag only moves the camera, a swatch only
-## picks a colour, and ten quick clicks all land in the shown castle.
+## another, a right-click takes it away, Ctrl+Z / Ctrl+Y undo and redo, a left drag paints a row of blocks (one undo step), a
+## middle drag moves the camera, a right drag turns it, a swatch only picks a colour, and ten quick clicks all land in the shown castle.
 ## Run: Godot --path . --audio-driver Dummy --resolution 1600x900 --script res://tests/verify_cs_editor.gd -- --cs-fresh
 
 const FRAME_CAP := 4000
@@ -68,6 +68,79 @@ func _click(pos: Vector2, button: int = MOUSE_BUTTON_LEFT) -> void:
 		e.global_position = pos
 		root.push_input(e)
 		await process_frame
+
+
+func _path(pts: Array) -> Array:
+	## The mouse path through the given points, a sample about every 12 px.
+	var out := [pts[0]]
+	for i in range(1, pts.size()):
+		var a: Vector2 = pts[i - 1]
+		var b: Vector2 = pts[i]
+		var n := maxi(int(ceilf(a.distance_to(b) / 12.0)), 1)
+		for j in range(1, n + 1):
+			out.append(a.lerp(b, float(j) / float(n)))
+	return out
+
+
+func _drag(button: int, path: Array) -> void:
+	## Press at the path's start, move along it (a frame between samples), release at its end.
+	var first: Vector2 = path[0]
+	var mv0 := InputEventMouseMotion.new()
+	mv0.position = first
+	mv0.global_position = first
+	root.push_input(mv0)
+	var press := InputEventMouseButton.new()
+	press.button_index = button
+	press.pressed = true
+	press.position = first
+	press.global_position = first
+	root.push_input(press)
+	await process_frame
+	for i in range(1, path.size()):
+		var mv := InputEventMouseMotion.new()
+		mv.position = path[i]
+		mv.global_position = path[i]
+		mv.relative = path[i] - path[i - 1]
+		mv.button_mask = 1 << (button - 1)
+		root.push_input(mv)
+		await process_frame
+	var last: Vector2 = path[path.size() - 1]
+	var rel := InputEventMouseButton.new()
+	rel.button_index = button
+	rel.pressed = false
+	rel.position = last
+	rel.global_position = last
+	root.push_input(rel)
+	await process_frame
+
+
+func _sea_pair(wild: bool) -> Array:
+	## Two screen points over free sea cells in view, 150-300 px apart, each of which a click would build on (wild: a landscape column).
+	var grid: CSGrid = main.grid
+	var town: CSTown = main.town
+	var cands := []
+	for v in grid.verts.size():
+		if not grid.buildable(v) or town.top(v) >= 0 or town.has_wild(v):
+			continue
+		var d := grid.verts[v].length()
+		if d < 24.0 or d > 36.0:
+			continue
+		var w := Vector3(grid.verts[v].x, 0.0, grid.verts[v].y)
+		if (main.cam as Camera3D).is_position_behind(w):
+			continue
+		var sc := _screen(w)
+		if not _safe(sc):
+			continue
+		var pk: Dictionary = main.pick(sc)
+		if (int(pk.wadd) if wild else (int(pk.add[0]) if not (pk.add as Array).is_empty() else -1)) != v:
+			continue
+		cands.append(sc)
+	for i in cands.size():
+		for j in range(i + 1, cands.size()):
+			var dd: float = (cands[i] as Vector2).distance_to(cands[j])
+			if dd > 150.0 and dd < 300.0:
+				return [cands[i], cands[j]]
+	return []
 
 
 func _key(code: int, ctrl: bool) -> void:
@@ -190,34 +263,69 @@ func _run() -> void:
 	await _key(KEY_Y, true)
 	await _settle()
 	ok(not town.has(spot, 1), "Ctrl+Y takes it away again")
-	# a left drag moves the camera and builds nothing
+	# a left drag PAINTS: a block on every new cell the mouse passes over, none stacked on what the stroke just built,
+	# one undo step for the whole stroke; a middle drag moves the camera, a right drag turns it, both build nothing
 	var n2 := town.size()
-	var goal0: Vector3 = main.cam_goal
-	var a := Vector2(vs.x * 0.5, vs.y * 0.5)
-	var press := InputEventMouseButton.new()
-	press.button_index = MOUSE_BUTTON_LEFT
-	press.pressed = true
-	press.position = a
-	root.push_input(press)
-	for j in 6:
-		var mv := InputEventMouseMotion.new()
-		mv.position = a + Vector2(12.0 * (j + 1), 0.0)
-		mv.relative = Vector2(12.0, 0.0)
-		root.push_input(mv)
-		await process_frame
-	var rel := InputEventMouseButton.new()
-	rel.button_index = MOUSE_BUTTON_LEFT
-	rel.pressed = false
-	rel.position = a + Vector2(72.0, 0.0)
-	root.push_input(rel)
+	var pair := _sea_pair(false)
+	ok(pair.size() == 2, "found two spots on the sea to drag between")
+	if pair.size() == 2:
+		var pa: Vector2 = pair[0]
+		var pb: Vector2 = pair[1]
+		var hist0: int = main.history.size()
+		var goal_l: Vector3 = main.cam_goal
+		await _drag(MOUSE_BUTTON_LEFT, _path([pa, pb]))
+		await _settle()
+		var painted := town.size() - n2
+		ok(painted >= 2, "a left drag across the sea paints blocks on the cells it passes over (%d)" % painted)
+		ok(main.history.size() == hist0 + 1, "the whole stroke is one undo step (%d new)" % (main.history.size() - hist0))
+		ok((main.cam_goal as Vector3).distance_to(goal_l) < 0.01, "a left drag does not move the camera")
+		ok(not main.stroke_active and main.stroke_seen.is_empty(), "the stroke ends when the button is released")
+		await _key(KEY_Z, true)
+		await _settle()
+		ok(town.size() == n2, "one Ctrl+Z takes the whole stroke back (%d -> %d blocks)" % [n2 + painted, town.size()])
+		await _key(KEY_Y, true)
+		await _settle()
+		ok(town.size() == n2 + painted, "Ctrl+Y paints it again")
+		# back and forth over the same cells in one stroke builds nothing new on top of it
+		await _key(KEY_Z, true)
+		await _settle()
+		var cols0 := town.columns()
+		await _drag(MOUSE_BUTTON_LEFT, _path([pa, pb, pa, pb]))
+		await _settle()
+		var tall := 0
+		var fresh := 0
+		for v2: int in town.columns():
+			if not cols0.has(v2):
+				fresh += 1
+				if town.top(v2) > 0:
+					tall += 1
+		ok(fresh >= 2 and tall == 0, "dragging back and forth over the cells the stroke built does not stack blocks on them (%d new columns, %d stacked)" % [fresh, tall])
+		await _key(KEY_Z, true)
+		await _settle()
+		ok(town.size() == n2, "and that stroke was one undo step too (%d blocks)" % town.size())
+		var h1: int = main.history.size()
+		var n_before := town.size()
+		await _drag(MOUSE_BUTTON_LEFT, [pa, pa + Vector2(2.0, 1.0)])
+		await _settle()
+		ok(town.size() == n_before + 1 and main.history.size() == h1 + 1 and not main.stroke_active, "a left button moved only a couple of pixels is still a click: one block, no stroke")
+		await _key(KEY_Z, true)
+		await _settle()
+	var goal_m: Vector3 = main.cam_goal
+	var nm := town.size()
+	await _drag(MOUSE_BUTTON_MIDDLE, _path([Vector2(vs.x * 0.5, vs.y * 0.5), Vector2(vs.x * 0.5 + 72.0, vs.y * 0.5)]))
 	await _settle()
-	ok(town.size() == n2 and (main.cam_goal as Vector3).distance_to(goal0) > 0.5, "a drag moves the camera and builds nothing")
+	ok(town.size() == nm and (main.cam_goal as Vector3).distance_to(goal_m) > 0.5, "a middle drag moves the camera and builds nothing")
+	var yaw0: float = main.cam_yaw
+	await _drag(MOUSE_BUTTON_RIGHT, _path([Vector2(vs.x * 0.5, vs.y * 0.5), Vector2(vs.x * 0.5 + 96.0, vs.y * 0.5)]))
+	await _settle()
+	ok(town.size() == nm and absf(main.cam_yaw - yaw0) > 0.1, "a right drag turns the camera and takes nothing away")
+	var n2b := town.size()
 	# a swatch picks a colour and builds nothing under it
 	var ui: CSUi = main.ui
 	var sw: Button = ui.swatches[7]
 	await _click(sw.get_global_rect().get_center())
 	await _settle()
-	ok(main.colour == 7 and town.size() == n2, "a swatch picks colour 8 and builds nothing (colour %d)" % main.colour)
+	ok(main.colour == 7 and town.size() == n2b, "a swatch picks colour 8 and builds nothing (colour %d)" % main.colour)
 	# ten quick clicks on the sea while the worker builds: every block lands in the shown castle
 	var ring := []
 	for v in grid.verts.size():
@@ -338,6 +446,33 @@ func _run() -> void:
 		await _click(lscr2)
 		await _settle()
 		ok(town.top(lv) >= 0 and not town.has_wild(lv), "a castle block on a landscape column replaces what was there")
+	# painting the landscape: a stroke of Land puts land on every column it passes over, one undo step
+	main.load_starter("castle")
+	await _settle()
+	main.set_build_type(CSTown.T_LAND)
+	var lpair := _sea_pair(true)
+	ok(lpair.size() == 2, "found two spots on the sea to paint land between")
+	if lpair.size() == 2:
+		var w0 := 0
+		for v3 in grid.verts.size():
+			if town.wild_is_ground(v3):
+				w0 += 1
+		var hl0: int = main.history.size()
+		await _drag(MOUSE_BUTTON_LEFT, _path([lpair[0], lpair[1]]))
+		await _settle()
+		var w1 := 0
+		for v3 in grid.verts.size():
+			if town.wild_is_ground(v3):
+				w1 += 1
+		ok(w1 - w0 >= 2 and main.history.size() == hl0 + 1, "a Land stroke paints land on the columns it passes over, as one undo step (%d new columns, %d history steps)" % [w1 - w0, main.history.size() - hl0])
+		await _key(KEY_Z, true)
+		await _settle()
+		var w2 := 0
+		for v3 in grid.verts.size():
+			if town.wild_is_ground(v3):
+				w2 += 1
+		ok(w2 == w0, "one Ctrl+Z takes the whole stroke of land back (%d -> %d)" % [w1, w2])
+	main.set_build_type(CSTown.T_CASTLE)
 	# the building styles: each type button puts down a block of its own style, with a hat of its own and painted walls
 	main.load_starter("castle")
 	await _settle()

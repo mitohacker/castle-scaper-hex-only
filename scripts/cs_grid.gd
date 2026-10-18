@@ -1,22 +1,20 @@
 class_name CSGrid
 extends RefCounted
-## Castle Scaper Hex: the ORGANIC HEX GRID. A triangle lattice cut to a hexagon, random edge flips that leave every inner
-## point with 5, 6 or 7 neighbours, then every triangle pulled towards the best-fitting equilateral triangle round its own
-## centre (Townscaper's summed-pull relaxation, averaged per point). The dual cells are then mostly hexagons, with pentagons
-## and heptagons where a flip landed, warped by the relaxation. Every cell corner is shared by exactly three cells, all
-## neighbours of each other, so two blocks never touch at only a corner.
+## Castle Scaper Hex: the ORGANIC HEX GRID. A triangle lattice cut to a hexagon (every inner point has six neighbours, so
+## EVERY cell is a hexagon), every triangle pulled towards the best-fitting equilateral triangle round its own centre
+## (Townscaper's summed-pull relaxation, averaged per point), then every inner point nudged by a seeded random step so the
+## hexagons come out irregular and organic. Every cell corner is shared by exactly three cells, all neighbours of each
+## other, so two blocks never touch at only a corner.
 ##
 ## A block stands on a grid POINT (Townscaper's voxels live on corners) and fills that point's dual cell: the centroids of
 ## the triangles round it. The map's border points are pinned and cannot be built on.
 
 const RELAX_STEPS := 255
 const HEX_PULL := 0.8               # the averaged pull per step
-const FLIP_TRIES := 0.2             # share of the inner edges tried for a flip (42 % of cells stay hexagons, 29 % pentagons, 29 % heptagons)
+const JITTER := 0.25                # how far an inner point wanders from the regular lattice, in lattice steps (0 = a perfect hex grid)
 
-static var default_flip := FLIP_TRIES # --cs-flip=0.05 (68 % hexagons) .. 0.6 (30 %)
-static var default_pure := true      # --cs-flip-pure=0 lets defects cluster (stretched cells; broke some corbels)
-var flip_share := default_flip       # tools/grid_probe.gd sweeps these knobs
-var flip_pure := default_pure             # flip only where all four points still have six neighbours
+static var default_jitter := JITTER  # --cs-jitter=0.25 (0 .. 0.35 and the cells stay convex)
+var jitter := default_jitter         # tools/grid_probe.gd sweeps this knob
 var circ_blend := 0.0               # a cell corner from the triangle's centroid (0) towards its circumcentre (1)
 
 var step := 10.0                    # lattice step is half of this (m); cells are about 22 m2
@@ -72,86 +70,7 @@ func generate(p_seed: int = 1, p_radius: int = 10, p_step: float = 10.0) -> void
 				tri.append([vid[Vector2i(a, b)], vid[Vector2i(a + 1, b)], vid[Vector2i(a, b + 1)]])
 			if inside.call(a + 1, b) and inside.call(a + 1, b + 1) and inside.call(a, b + 1):
 				tri.append([vid[Vector2i(a + 1, b)], vid[Vector2i(a + 1, b + 1)], vid[Vector2i(a, b + 1)]])
-	# 2. random edge flips: (a, b, c) + (b, a, d) -> (c, a, d) + (d, b, c); a and b lose a neighbour, c and d gain one
-	var deg := PackedInt32Array()
-	deg.resize(nv)
-	var edges := {}                           # edge key -> [triangle, triangle]
-	var ekey := func(a: int, b: int) -> int:
-		return mini(a, b) * 1048576 + maxi(a, b)
-	for t in tri.size():
-		for k in 3:
-			var a: int = tri[t][k]
-			var b: int = tri[t][(k + 1) % 3]
-			var ek: int = ekey.call(a, b)
-			if not edges.has(ek):
-				edges[ek] = []
-				deg[a] += 1
-				deg[b] += 1
-			(edges[ek] as Array).append(t)
-	var order: Array = edges.keys()
-	for i in range(order.size() - 1, 0, -1):
-		var j := rng.randi_range(0, i)
-		var tmp = order[i]
-		order[i] = order[j]
-		order[j] = tmp
-	var tries := int(float(order.size()) * flip_share)
-	var flipped := {}                         # triangles already touched by a flip stay as they are (keeps defects apart)
-	for ii in tries:
-		var ek: int = order[ii]
-		if not edges.has(ek):
-			continue
-		var ts: Array = edges[ek]
-		if ts.size() != 2 or flipped.has(ts[0]) or flipped.has(ts[1]):
-			continue
-		var a: int = ek / 1048576
-		var b: int = ek % 1048576
-		var t0: int = ts[0]
-		var t1: int = ts[1]
-		# t0 must run a -> b; find c (t0's third) and d (t1's third)
-		var tr0: Array = tri[t0]
-		var k0 := tr0.find(a)
-		if tr0[(k0 + 1) % 3] != b:
-			var sw := a
-			a = b
-			b = sw
-			k0 = tr0.find(a)
-		var c: int = tr0[(k0 + 2) % 3]
-		var d := -1
-		for q: int in tri[t1]:
-			if q != a and q != b:
-				d = q
-		if border[a] or border[b] or border[c] or border[d]:
-			continue
-		if deg[a] <= 5 or deg[b] <= 5 or deg[c] >= 7 or deg[d] >= 7:
-			continue
-		if flip_pure and (deg[a] != 6 or deg[b] != 6 or deg[c] != 6 or deg[d] != 6):
-			continue
-		# the new diagonal must lie inside the quad (a, d, b, c) at rest
-		var pa := rest[a]
-		var pb := rest[b]
-		var pc := rest[c]
-		var pd := rest[d]
-		if (pa - pc).cross(pd - pc) <= 1e-6 or (pb - pd).cross(pc - pd) <= 1e-6:
-			continue
-		var ekcd: int = ekey.call(c, d)
-		if edges.has(ekcd):
-			continue
-		tri[t0] = [c, a, d]
-		tri[t1] = [d, b, c]
-		edges.erase(ek)
-		edges[ekcd] = [t0, t1]
-		for pair: Array in [[a, d, t1, t0], [b, c, t0, t1]]:
-			var e2k: int = ekey.call(pair[0], pair[1])
-			var lst: Array = edges[e2k]
-			var at := lst.find(pair[2])
-			if at >= 0:
-				lst[at] = pair[3]
-		deg[a] -= 1
-		deg[b] -= 1
-		deg[c] += 1
-		deg[d] += 1
-		flipped[t0] = true
-		flipped[t1] = true
+	# 2. every inner point keeps its six triangles, so every cell is a hexagon (no edge flips: they made pentagons and heptagons)
 	var qs := PackedInt32Array()
 	for tr: Array in tri:
 		qs.append(tr[0])
@@ -205,6 +124,16 @@ func generate(p_seed: int = 1, p_radius: int = 10, p_step: float = 10.0) -> void
 		for i in nv:
 			if not border[i]:
 				p[i] += dsum[i] * inv[i]
+	# 4. the organic part: every inner point is moved a seeded random step inside a disc of `jitter` lattice steps. The
+	# topology stays a hexagon everywhere; only the shapes warp (the border stays pinned).
+	if jitter > 0.0:
+		var reach := jitter * s
+		for i in nv:
+			if border[i]:
+				continue
+			var ang := rng.randf() * TAU
+			var rad := sqrt(rng.randf()) * reach
+			p[i] += Vector2(cos(ang), sin(ang)) * rad
 	verts = p
 	_build_topology()
 

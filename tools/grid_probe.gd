@@ -3,14 +3,13 @@ extends SceneTree
 ## Run: Godot --headless --path . --script res://tools/grid_probe.gd
 
 func _initialize() -> void:
-	# --flip=0.55, --pure, --circ=0.5, --seed=1
+	# --jitter=0.2, --circ=0.5, --seed=1
 	var opt := {}
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--"):
 			opt[a.substr(2).get_slice("=", 0)] = a.get_slice("=", 1) if "=" in a else "1"
 	var g := CSGrid.new()
-	g.flip_share = float(opt.get("flip", CSGrid.default_flip))
-	g.flip_pure = opt.has("pure") or CSGrid.default_pure
+	g.jitter = float(opt.get("jitter", CSGrid.default_jitter))
 	g.circ_blend = float(opt.get("circ", 0.0))
 	g.generate(int(opt.get("seed", 1)), 10, 10.0)
 	var b := CSBuild.new()

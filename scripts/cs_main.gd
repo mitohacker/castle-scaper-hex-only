@@ -7,6 +7,7 @@ const AUTOSAVE := "user://castle_scaper_hex_autosave.json"
 const CASTLES_DIR := "user://castles"
 const HISTORY_MAX := 300
 const DRAG_PX := 6.0
+const PAINT_STEP_PX := 6.0             # a painting stroke picks a target every this many pixels along the mouse path
 
 var grid := CSGrid.new()
 var town := CSTown.new()
@@ -73,6 +74,12 @@ var spin := false
 var hover := {}
 var last_mouse := Vector2.ZERO
 var press := {}                     # button -> {"pos": Vector2, "moved": bool}
+var stroke_active := false          # a left-button drag is painting blocks (one undo step for the whole stroke)
+var stroke_recorded := false        # the stroke's undo step is on the history already
+var stroke_seen := {}               # targets built during this stroke (block keys, "wNNN" for wild columns)
+var stroke_last := Vector2.ZERO     # where the stroke was last painted
+var stroke_count := 0
+var paint_cue_shown := false
 var history := []
 var future := []
 var dirty := true
@@ -100,10 +107,8 @@ var shot_next := 0.0
 
 func _ready() -> void:
 	args = _parse_args()
-	if args.has("flip"):
-		CSGrid.default_flip = float(args.flip)
-	if args.has("flip-pure"):
-		CSGrid.default_pure = str(args["flip-pure"]) != "0"
+	if args.has("jitter"):
+		CSGrid.default_jitter = float(args.jitter)
 	if args.has("uncap"):
 		Engine.max_fps = 0
 		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
@@ -404,7 +409,15 @@ func mark_changed() -> void:
 
 
 func push_history() -> void:
-	history.append(town.to_dict())
+	if stroke_active and stroke_recorded:
+		return                          # the stroke's first edit already saved the state before it
+	_record(town.to_dict())
+
+
+func _record(snap: Dictionary) -> void:
+	if stroke_active:
+		stroke_recorded = true
+	history.append(snap)
 	if history.size() > HISTORY_MAX:
 		history.pop_front()
 	future.clear()
@@ -775,24 +788,26 @@ func _wild_near(pt: Vector2, v: int) -> int:
 	return best
 
 
-func add_wild(v: int) -> bool:
+func add_wild(v: int, quiet: bool = false) -> bool:
+	## quiet: no refusal messages (a painting stroke runs over cells that refuse all the time)
 	if v < 0 or not grid.buildable(v) or town.top(v) >= 0:
 		return false
 	var land := str(build.land.get(v, "")) if build != null else ""
 	if land == "base" or land == "passage":
-		flash("The castle stands there")
+		if not quiet:
+			flash("The castle stands there")
 		return false
 	if land == "court" and build_type != CSTown.T_LAND and build_type != CSTown.T_TREE and build_type != CSTown.T_ROAD:
-		flash("Only land, trees and roads grow in a courtyard")
+		if not quiet:
+			flash("Only land, trees and roads grow in a courtyard")
 		return false
-	var snap := town.to_dict()
+	var snap := {} if (stroke_active and stroke_recorded) else town.to_dict()
 	if not town.wild_add(v, build_type):
-		flash(_wild_refusal(v))
+		if not quiet:
+			flash(_wild_refusal(v))
 		return false
-	history.append(snap)
-	if history.size() > HISTORY_MAX:
-		history.pop_front()
-	future.clear()
+	if not snap.is_empty():
+		_record(snap)
 	_puff_wild(v, false)
 	mark_changed()
 	return true
@@ -861,7 +876,7 @@ func _update_ghost() -> void:
 		_update_wild_ghost()
 		return
 	var target: Array = hover.get("remove", []) if press.has(MOUSE_BUTTON_RIGHT) else hover.get("add", [])
-	if target.is_empty() or (press.has(MOUSE_BUTTON_LEFT) and press[MOUSE_BUTTON_LEFT].moved) or ui.mouse_over_ui():
+	if target.is_empty() or ui.mouse_over_ui():
 		ghost_mi.visible = false
 		return
 	var v: int = target[0]
@@ -876,7 +891,7 @@ func _update_ghost() -> void:
 
 func _update_wild_ghost() -> void:
 	var v := int(hover.get("wadd", -1))
-	if v < 0 or (press.has(MOUSE_BUTTON_LEFT) and press[MOUSE_BUTTON_LEFT].moved) or ui.mouse_over_ui():
+	if v < 0 or ui.mouse_over_ui():
 		ghost_mi.visible = false
 		return
 	var key := "w%d:%d:%d" % [v, build_type, town.wild_heights(v).length() * 10 + town.wild_trees(v)]
@@ -1088,6 +1103,12 @@ func _shot_step() -> void:
 
 # --- input ---------------------------------------------------------------------------------------
 
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		press.clear()                   # the button's release goes to another window: end the drag here
+		_stroke_end()
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var e := event as InputEventMouseButton
@@ -1101,6 +1122,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		else:
 			var info: Dictionary = press.get(e.button_index, {})
 			press.erase(e.button_index)
+			if e.button_index == MOUSE_BUTTON_LEFT:
+				_stroke_end()
 			if info.is_empty() or info.moved:
 				return
 			if e.button_index == MOUSE_BUTTON_LEFT:
@@ -1127,14 +1150,76 @@ func _unhandled_input(event: InputEvent) -> void:
 		if press.has(MOUSE_BUTTON_RIGHT) and press[MOUSE_BUTTON_RIGHT].moved:
 			cam_yaw -= m.relative.x * 0.006
 			cam_pitch += m.relative.y * 0.005
-		elif press.has(MOUSE_BUTTON_MIDDLE) or (press.has(MOUSE_BUTTON_LEFT) and press[MOUSE_BUTTON_LEFT].moved):
+		elif press.has(MOUSE_BUTTON_MIDDLE):
 			var right := cam.global_transform.basis.x
 			var fwd := Vector3(-sin(cam_yaw), 0.0, -cos(cam_yaw))
 			var k := cam_dist * 0.0016
 			cam_goal += (-right * m.relative.x + fwd * m.relative.y) * k
 			cam_target = cam_goal
+		if press.has(MOUSE_BUTTON_LEFT) and press[MOUSE_BUTTON_LEFT].moved and not press.has(MOUSE_BUTTON_RIGHT) and not press.has(MOUSE_BUTTON_MIDDLE):
+			if not stroke_active:
+				_stroke_begin(press[MOUSE_BUTTON_LEFT].pos)
+			_stroke_to(m.position)
 	elif event is InputEventKey and event.pressed and not event.echo:
 		_key(event as InputEventKey)
+
+
+# --- painting: a left-button drag puts a block on every new target the mouse passes over -------------
+
+func _stroke_begin(pos: Vector2) -> void:
+	stroke_active = true
+	stroke_recorded = false
+	stroke_seen.clear()
+	stroke_count = 0
+	stroke_last = pos
+	_stroke_paint(pos)
+	if not paint_cue_shown:
+		paint_cue_shown = true
+		flash("Painting: keep the left button down and drag to build; Ctrl+Z undoes the whole stroke")
+
+
+func _stroke_to(pos: Vector2) -> void:
+	## Paint along the line from the last painted point to pos, a sample every few pixels, so a fast drag leaves no gaps.
+	var d := stroke_last.distance_to(pos)
+	var n := maxi(int(ceilf(d / PAINT_STEP_PX)), 1)
+	for i in range(1, n + 1):
+		_stroke_paint(stroke_last.lerp(pos, float(i) / float(n)))
+	stroke_last = pos
+
+
+func _stroke_paint(pos: Vector2) -> void:
+	if ui.mouse_over_ui():
+		return
+	var pk := pick(pos)
+	if build_type < CSTown.BUILDING_TYPES:
+		var a: Array = pk.get("add", [])
+		if a.is_empty():
+			return
+		var hit: Array = pk.get("remove", [])
+		var key := CSTown.key(a[0], a[1])
+		# a target built in this stroke, or the block just built in this stroke under the pointer (it would be stacked on), is skipped
+		if stroke_seen.has(key) or (not hit.is_empty() and stroke_seen.has(CSTown.key(hit[0], hit[1]))):
+			return
+		if add_block(a[0], a[1]):
+			stroke_seen[key] = true
+			stroke_count += 1
+	else:
+		var w := int(pk.get("wadd", -1))
+		if w < 0 or stroke_seen.has("w%d" % w):
+			return
+		if add_wild(w, true):
+			stroke_seen["w%d" % w] = true
+			stroke_count += 1
+
+
+func _stroke_end() -> void:
+	if not stroke_active:
+		return
+	stroke_active = false
+	stroke_recorded = false
+	if stroke_count > 1:
+		flash("Painted %d blocks: Ctrl+Z takes them all back" % stroke_count)
+	stroke_seen.clear()
 
 
 func _key(e: InputEventKey) -> void:

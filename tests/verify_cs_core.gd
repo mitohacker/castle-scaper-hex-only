@@ -86,9 +86,39 @@ func _grid() -> void:
 			lost += 1
 	ok(asym == 0, "neighbours are mutual (%d one-way)" % asym)
 	ok(buildable > 600, "%d buildable grid points" % buildable)
-	var hexes := int(val.get(6, 0))
-	ok(hexes > buildable / 3 and hexes >= int(val.get(5, 0)) and int(val.get(5, 0)) > 50 and int(val.get(7, 0)) > 50 and val.size() == 3,
-		"organic hex grid: hexagons the commonest, with pentagons and heptagons, nothing else (%s)" % str(val))
+	ok(val.size() == 1 and int(val.get(6, 0)) == buildable, "every cell is a hexagon, no pentagons or heptagons (%s)" % str(val))
+	var edge_cells := 0
+	var edge_hex := 0
+	var shared_bad := 0
+	for v in grid.verts.size():
+		if not grid.buildable(v):
+			continue
+		var nbv: PackedInt32Array = grid.nbrs[v]
+		var rgv: PackedInt32Array = grid.rings[v]
+		var touches_border := false
+		for u in nbv:
+			if grid.border[u]:
+				touches_border = true
+		if touches_border:
+			edge_cells += 1
+			if grid.dual(v).size() == 6 and nbv.size() == 6:
+				edge_hex += 1
+		# a cell corner is shared by three cells that all touch: the triangle's other two points are neighbours of each other
+		for q in rgv:
+			var t := [grid.tris[q * 3], grid.tris[q * 3 + 1], grid.tris[q * 3 + 2]]
+			if grid.index_of(t[0], t[1]) < 0 or grid.index_of(t[1], t[2]) < 0 or grid.index_of(t[2], t[0]) < 0:
+				shared_bad += 1
+	ok(edge_cells > 50 and edge_hex == edge_cells, "the cells along the board's edge are hexagons too (%d of %d)" % [edge_hex, edge_cells])
+	ok(shared_bad == 0, "every cell corner is shared by three cells that all touch (%d bad)" % shared_bad)
+	var sides := []
+	for v in grid.verts.size():
+		if grid.buildable(v):
+			var dv := grid.dual(v)
+			for i in dv.size():
+				sides.append(dv[i].distance_to(dv[(i + 1) % dv.size()]))
+	sides.sort()
+	ok(float(sides[sides.size() * 9 / 10]) > float(sides[sides.size() / 10]) * 1.2 and float(sides[0]) > 0.8,
+		"the hexagons are irregular, not a perfect lattice (side p10 %.2f m, p90 %.2f m)" % [sides[sides.size() / 10], sides[sides.size() * 9 / 10]])
 	var concave := 0
 	for v in grid.verts.size():
 		if grid.buildable(v) and not CSBuild.convex(grid.dual(v)):
