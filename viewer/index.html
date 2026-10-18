@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Castle Scaper vs Townscaper: combinations</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav class="nav" id="nav">
+	<div class="wrap">
+		<a class="brand" href="#top">Combinations</a>
+		<a href="#head">In short</a>
+		<a href="#reading">Reading a click</a>
+		<a href="#townscaper">Townscaper</a>
+		<a href="#game">This game</a>
+		<a href="#outcomes">The outcomes</a>
+		<a href="#castles">Real castles</a>
+		<a href="#ripple">One click</a>
+		<a href="#landscape">Landscape</a>
+		<a href="#next">Next</a>
+		<a href="#method">Method</a>
+	</div>
+	<span class="bar" id="navbar"></span>
+</nav>
+
+<header class="hero" id="top">
+	<canvas class="bgfx" id="bgfx"></canvas>
+	<div class="wrap">
+		<div class="kicker">Castle Scaper Realistic &middot; measured 2026-10-18</div>
+		<h1>How many things can<br>one click become?</h1>
+		<p class="sub">The game you are building against the original Townscaper. Every number on this page was counted from the rules,
+			and every picture was rendered by the game itself.</p>
+		<div class="funnels" id="funnels"></div>
+		<div class="stats" id="stats"></div>
+	</div>
+</header>
+
+<main>
+<section class="sec" id="head">
+	<div class="wrap">
+		<div class="kicker">In short</div>
+		<h2>Castle and ocean only, against Townscaper</h2>
+		<p class="lead">Leave the landscape out and count what each game can answer with, arches, corbels, pillars and stairs included. Townscaper's numbers are read from
+			its own library file (counts only, nothing copied); this game's are measured with its own rules. Bars are on a log scale.</p>
+		<div class="hh" id="hh"></div>
+		<p class="caption" id="hhNote"></p>
+	</div>
+</section>
+
+<section class="sec" id="reading">
+	<div class="wrap">
+		<div class="kicker">1 &middot; Reading a click</div>
+		<h2>Two ways of reading the same click</h2>
+		<p class="lead">A click puts one block on a grid point. What that block becomes depends on what is around it. The two games look at that
+			surrounding in different ways, and that decides how many different things can come out.</p>
+		<div class="cols">
+			<div class="card ts-card rv">
+				<h3>Townscaper <span class="tag ts">cell = 4 corners</span></h3>
+				<svg class="diagram" id="dgTs" viewBox="0 0 520 380"></svg>
+				<p class="caption">A piece is chosen for every <b>cell</b> between four grid points and one storey. It reads that cell's 8 corners, diagonals included.
+					A click re-keys the 8 cells round the point, then a wave runs outward as far as the faces differ.</p>
+			</div>
+			<div class="card gm-card rv">
+				<h3>This game <span class="tag gm">block = grid point</span></h3>
+				<svg class="diagram" id="dgGm" viewBox="0 0 520 380"></svg>
+				<p class="caption">A role is chosen for every <b>grid point</b> and storey. It reads 14 yes/no answers: four side neighbours on three storeys and its own column.
+					Diagonal blocks only pinch a corner. Then whole-map passes run: sea flood fill, walk areas, stairs, arches, props.</p>
+			</div>
+		</div>
+		<table class="cmp rv">
+			<tr><th></th><th>Townscaper</th><th>This game now</th></tr>
+			<tr><td>Decides</td><td>one piece per cell (between 4 grid points), per storey</td><td>one role per grid point, per storey</td></tr>
+			<tr><td>Reads</td><td>8 corners of the cell (diagonals included) and which share a colour</td><td>4 side neighbours &times; 3 storeys + own column; colour is not read</td></tr>
+			<tr><td>After a click</td><td>8 cells re-keyed, then a wave that stops where faces agree</td><td>everything rebuilds, plus whole-map passes (courtyards, walks, stairs, arches)</td></tr>
+			<tr><td>Details</td><td>greedy non-overlapping decor and props</td><td>the same idea, 14 prop kinds</td></tr>
+		</table>
+	</div>
+</section>
+
+<section class="sec" id="townscaper">
+	<div class="wrap">
+		<div class="kicker">2 &middot; Townscaper's side</div>
+		<h2>Its lookup holds <span class="ts num" id="tsTotal">4,769</span> corner keys</h2>
+		<p class="lead">Each cell has 8 corners, and each corner is air, ground or a colour. Corners buried inside the building cannot be seen, so the lookup
+			ignores them. Colours are renamed &ldquo;first colour, second colour&hellip;&rdquo; so the key only knows <i>which corners share a colour</i>.
+			Try it: click the corners.</p>
+		<div class="cubebox">
+			<div class="rv">
+				<canvas class="cube" id="cube" width="720" height="720"></canvas>
+				<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+					<div class="seg" id="layerSeg"></div>
+					<button class="btn" id="cubeRandom">Random</button>
+					<button class="btn" id="cubeClear">Clear</button>
+				</div>
+			</div>
+			<div class="rv">
+				<h3>The key this cell gets</h3>
+				<div class="chips" id="chips"></div>
+				<div class="verdict" id="verdict"></div>
+				<p class="muted" id="keyNote"></p>
+				<h3 style="margin-top:20px">Keys by kind of cell</h3>
+				<div class="bars" id="tsLayers"></div>
+				<p class="caption">The same key can occur in more than one kind of cell, so the total is not the sum of these.</p>
+			</div>
+		</div>
+		<div class="card ts-card rv" id="tsLib" style="margin-top:34px"></div>
+		<h3 style="margin-top:44px">Only 53 plain shapes</h3>
+		<p class="muted">Forget colours: a cell's corners are filled or empty. Turned and mirrored, there are just 53 patterns (the empty and the buried cell need no piece).
+			Everything else Townscaper builds comes from colour boundaries, from the layer (ground, first storey, upper) and from the neighbours' faces.</p>
+		<div class="shapes" id="shapes"></div>
+		<div class="cols" style="margin-top:34px">
+			<div class="card rv">
+				<h3>Colour is an input</h3>
+				<p class="muted">Upper-storey keys by how many different colours show in them:</p>
+				<div class="bars" id="tsColours"></div>
+			</div>
+			<div class="card rv">
+				<h3>In this game colour is paint</h3>
+				<p class="muted">The 12 swatches are 12 materials. They change the look of a block, but not its shape &mdash; except that warm colours get a tile roof and cool
+					colours a slate roof, and two touching blocks of different colours become two bodies. A colour boundary never picks a different piece.</p>
+				<p class="muted" style="margin-bottom:0">That is one whole axis of Townscaper's variety this game does not use yet.</p>
+			</div>
+		</div>
+	</div>
+</section>
+
+<section class="sec" id="game">
+	<div class="wrap">
+		<div class="kicker">3 &middot; This game's side</div>
+		<h2>One point, one storey: <span class="gm num" id="gmRaw">16,384</span> arrangements</h2>
+		<p class="lead">I built <i>every</i> arrangement of the blocks round one grid point and let the game decide. Click the squares round the block (the gold one in the middle)
+			to change its neighbourhood, or pick an outcome to see the smallest neighbourhood that makes it.</p>
+		<div class="seg" id="levelSeg" style="margin-bottom:16px"></div>
+		<div class="nbox">
+			<div class="rv">
+				<svg class="plan" id="plan" viewBox="0 0 560 480"></svg>
+				<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+					<button class="btn" id="nbRandom">Random pattern</button>
+					<button class="btn" id="nbClear">No neighbours</button>
+					<button class="btn" id="nbPlay">&#9654; Play through patterns</button>
+				</div>
+				<p class="caption">Plan view from above. Each neighbour shows its three storeys: <b>+1</b> up, <b>0</b> same, <b>&minus;1</b> down. Grey = a block is there; gold = this block and its own column.</p>
+				<p class="caption" id="planNote"></p>
+			</div>
+			<div class="rv">
+				<div class="card outcome-card" id="outcomeCard"></div>
+				<div class="outcome-chips" id="outcomeChips"></div>
+			</div>
+		</div>
+	</div>
+</section>
+
+<section class="sec" id="outcomes">
+	<div class="wrap">
+		<div class="kicker">4 &middot; The outcomes</div>
+		<h2>The <span class="gm num" id="gmOut">22</span> things a block becomes</h2>
+		<p class="lead">Each picture is the smallest neighbourhood that produces that outcome, rendered by the game. Drag a picture to turn it.
+			The bar shows how many of the 16,384 patterns end up there.</p>
+		<div class="filters" id="gfilters"></div>
+		<div class="gallery" id="gallery"></div>
+		<h3 style="margin-top:44px">On the ground floor there are only <span class="gm" id="gmOut0">5</span></h3>
+		<div class="gallery" id="gallery0" style="margin-top:14px"></div>
+	</div>
+</section>
+
+<section class="sec" id="castles">
+	<div class="wrap">
+		<div class="kicker">5 &middot; In real castles</div>
+		<h2>What 6,000 random blocks actually show</h2>
+		<p class="lead" id="castleLead"></p>
+		<div class="cols">
+			<div class="card rv"><h3>What the tops are</h3><div class="bars" id="barsTop"></div></div>
+			<div class="card rv"><h3>What holds a floating block up</h3><div class="bars" id="barsSup"></div>
+				<h3 style="margin-top:20px">Openings and props</h3><div class="bars" id="barsOp"></div></div>
+		</div>
+		<div class="planbox" style="margin-top:26px">
+			<div class="card rv">
+				<h3>A plan of three castles, coloured by what their tops are</h3>
+				<div class="seg" id="planSeg" style="margin:8px 0 12px"></div>
+				<svg class="diagram" id="planMap" viewBox="0 0 640 520"></svg>
+				<div class="sliderrow"><button class="btn" id="planPlay">&#9654; Grow</button><span>storey</span><input type="range" id="planLevel" min="0" max="5" value="5"><b id="planLevelV">5</b></div>
+				<div class="legend" id="planLegend"></div>
+			</div>
+			<div class="card rv">
+				<h3>The same castle, turning</h3>
+				<div class="tt" id="castleTT"></div>
+				<p class="caption">Count the battlemented walks. That is 81% of all tops.</p>
+			</div>
+		</div>
+		<div class="cols" style="margin-top:26px">
+			<div class="card rv">
+				<h3>Structural variety stops growing, the decoration does not</h3>
+				<svg class="chart" id="curve" viewBox="0 0 560 300"></svg>
+				<div class="legend" id="curveLegend"></div>
+			</div>
+			<div class="card rv">
+				<h3>How much the neighbourhood decides</h3>
+				<div class="bars" id="barsDecide"></div>
+				<p class="caption" id="decideNote"></p>
+			</div>
+		</div>
+	</div>
+</section>
+
+<section class="sec" id="ripple">
+	<div class="wrap">
+		<div class="kicker">6 &middot; One click</div>
+		<h2>How far one click reaches</h2>
+		<p class="lead" id="rippleLead"></p>
+		<div class="cols">
+			<div class="card gm-card rv">
+				<h3>This game <span class="tag gm" id="rpTag"></span></h3>
+				<div class="seg" id="rpSeg" style="margin:6px 0 10px"></div>
+				<div class="ripple" id="rpBox"><canvas id="rpCanvas"></canvas><svg id="rpSvg"></svg></div>
+				<div style="display:flex;gap:8px;margin-top:10px"><button class="btn" id="rpPlay">&#9654; Click</button></div>
+				<ul class="chg" id="rpList" style="margin-top:12px"></ul>
+			</div>
+			<div class="card ts-card rv">
+				<h3>Townscaper <span class="tag ts">8 cells, then a wave</span></h3>
+				<svg class="diagram" id="dgWave" viewBox="0 0 520 380"></svg>
+				<p class="caption">The click writes a voxel into the corner column; the 4 cells round it, on 2 storeys each, are re-keyed. The wave then re-solves
+					neighbours only where their faces could differ, and stops where they do not. No global pass.</p>
+				<h3 style="margin-top:18px">Changed blocks per click, this game</h3>
+				<svg class="chart" id="rpHist" viewBox="0 0 520 190"></svg>
+			</div>
+		</div>
+	</div>
+</section>
+
+<section class="sec" id="landscape">
+	<div class="wrap">
+		<div class="kicker">7 &middot; The landscape layer</div>
+		<h2>Twenty-one pairs of types react</h2>
+		<p class="lead">Townscaper has blocks, ground and water, so three kinds of pair react: block with block (colour), block with ground, ground with water.
+			Here castle, land, road, trees, rocks, mountain and sea all react with each other. Click a square.</p>
+		<div class="cols">
+			<div class="card rv">
+				<svg class="matrix" id="matrix" viewBox="0 0 520 470"></svg>
+			</div>
+			<div class="card rv rulebox" id="ruleBox"></div>
+		</div>
+		<div class="cols3" style="margin-top:26px" id="landStats"></div>
+		<h3 style="margin-top:40px">Where the rules show</h3>
+		<p class="muted">Close-ups of the kingdom starter, found by the rule that made them. Drag to turn.</p>
+		<div class="gallery" id="spots" style="margin-top:14px"></div>
+	</div>
+</section>
+
+<section class="sec" id="next">
+	<div class="wrap">
+		<div class="kicker">8 &middot; Where the numbers say to work</div>
+		<h2>The thinnest part is the top</h2>
+		<p class="lead">Ranked by how much each gap shows in the measurements above.</p>
+		<div class="cols3" id="levers"></div>
+		<h3 style="margin-top:40px">The twelve build types</h3>
+		<p class="muted">The bar at the bottom of the game lists 7 building types and 5 landscape types. Only castle and the landscape ones have rules behind them so far.</p>
+		<div class="board" id="board"></div>
+	</div>
+</section>
+</main>
+
+<footer id="method">
+	<div class="wrap">
+		<h3>How this was measured</h3>
+		<ul>
+			<li><b>Townscaper</b>: the corner keys were first counted from the rules I read in the decompiled game (hidden corners ignored, colours renamed by first appearance, eight orientations), then checked against the game's own library file (<code>townscaper-re/tools/library_stats.py</code>): 4,764 of its 4,769 keys match exactly. Only counts were taken from the file; no pieces, meshes or data are copied or shown. A search found no published piece count.</li>
+			<li><b>This game</b>: <code>tools/combo_probe.gd</code> builds every neighbour arrangement round one regular point (storey 1: 14 bits; ground floor: 9 bits) and classifies
+				the block with <code>CSBuild</code>, then samples 100 random castles of 70 clicks, 25 castles for the click ripple and 30 landscape countries. The same counts came out on a second, skewed cell (sides 3.7 to 5.2 m).</li>
+			<li><b>Pictures</b>: <code>tools/analysis_render.gd</code> renders turntables and the click animation with the game's own scene.</li>
+			<li><b>Not covered</b>: 3-, 5- and 6-sided cells (17% of the map), diagonal and two-storeys-up neighbours, colour seams, and the six building styles, which are not wired yet.</li>
+		</ul>
+		<p class="dim" id="built"></p>
+	</div>
+</footer>
+
+<script src="data.js"></script>
+<script src="util.js"></script>
+<script src="turntable.js"></script>
+<script src="keyspace.js"></script>
+<script src="neigh.js"></script>
+<script src="charts.js"></script>
+<script src="diagrams.js"></script>
+<script src="main.js"></script>
+</body>
+</html>

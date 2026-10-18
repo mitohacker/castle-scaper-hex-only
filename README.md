@@ -15,6 +15,7 @@ Godot 4.7 (GDScript). A copy of Castle Scaper (which is unchanged).
 ```bat
 launch-castle-scaper-realistic.bat      :: play
 verify-castle-scaper-realistic.bat      :: compile, core suite (headless), editor suite (windowed, memory guard)
+viewer-castle-scaper-realistic.bat      :: the combinations viewer: this game against Townscaper (diagrams, animations, renders); "dump" / "render" redo its numbers / pictures
 ```
 
 | | |
@@ -31,8 +32,12 @@ verify-castle-scaper-realistic.bat      :: compile, core suite (headless), edito
 | B / P / F / Space | birds / details / frame / slow turn |
 
 Design, rules, engine, the look and numbers: [SPEC.md](SPEC.md). What is left compared with Townscaper: [TOWNSCAPER_GAP.md](TOWNSCAPER_GAP.md).
+How many things one click can become, measured against Townscaper's corner-key lookup: the combinations viewer (`viewer/index.html`, SPEC section 12): an
+animated page with an explorer over every neighbourhood of a block and the 3D turntables the game rendered of each outcome.
 
 Files: `scripts/cs_grid.gd`, `cs_town.gd`, `cs_build.gd`, `cs_props.gd`, `cs_starter.gd`, `cs_main.gd` + `cs_ui.gd` (Castle Scaper's);
 `cs_world.gd` + `cs_roads.gd` + `cs_scatter.gd` (the landscape), `cs_look.gd` (lights and qualities), `cs_rocks.gd` (rock skirt and sea floor), `cs_reflect.gd` (the reflection); `cf_*.gd` (Castle Forge's engine,
 triangulator, roofs, audit, birds); `shaders/cs_castle`, `cs_props`, `cs_rock`, `cs_sea`, `cs_seabed`, `cs_sky`, `cs_lens` `.gdshader` and
-`cs_common.gdshaderinc`. `tools/shots.ps1` takes clean screenshots under the memory guard.
+`cs_common.gdshaderinc`. `tools/shots.ps1` takes clean screenshots under the memory guard. The viewer's tools: `tools/combo_probe.gd` (counts every outcome and dumps
+`viewer/data/combos.json`), `tools/townscaper_keyspace.py` (Townscaper's corner-key space), `tools/analysis_render.gd` + `tools/render_viewer.ps1` (the pictures, rendered
+by the game), `tools/build_viewer_data.py` (-> `viewer/data.js`), `tools/serve_viewer.py` (the no-cache server).

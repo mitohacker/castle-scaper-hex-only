@@ -1,6 +1,6 @@
 # cs_run.ps1 -- run one Castle Scaper Godot script under the memory guard, after checking every script compiles.
 #   powershell -File tools\cs_run.ps1 -Script res://tools/smoke.gd [-ScriptArgs "-- --starter=castle"] [-Seconds 300] [-Windowed] [-Import]
-param([string]$Script, [string]$ScriptArgs = "", [int]$Seconds = 300, [double]$LimitGB = 1.5, [switch]$Windowed, [switch]$Import, [string]$WindowMode = "Hidden")
+param([string]$Script, [string]$ScriptArgs = "", [int]$Seconds = 300, [double]$LimitGB = 1.5, [switch]$Windowed, [switch]$Import, [string]$WindowMode = "Hidden", [string]$Resolution = "1600x900")
 $wt = (Resolve-Path "$PSScriptRoot\..").Path
 $mg = (Resolve-Path "$wt\..\.claude\skills\memory-guard").Path
 $gd = "C:\Dev\Godot\Godot_v4.7.1-stable_win64_console.exe"
@@ -14,6 +14,6 @@ $chk = Get-Content "$wt\tmp\check.log" -ErrorAction SilentlyContinue | Select-St
 $chk | ForEach-Object { $_.Line }
 if ($chk -match "failures: [1-9]" -or $chk -match "FAIL ") { Get-Content "$wt\tmp\check.log.err" -TotalCount 16; exit 2 }
 if ($Script -eq "") { exit 0 }
-$head = if ($Windowed) { "--resolution 1600x900" } else { "--headless" }
+$head = if ($Windowed) { "--resolution $Resolution" } else { "--headless" }
 & powershell -NoProfile -ExecutionPolicy Bypass -File $mg\guard_run.ps1 -WorkDir $wt -Seconds $Seconds -LimitGB $LimitGB -TimeIsFailure -ShowLog -WindowMode $WindowMode -Exe $gd -ExeArgs "$head --path . --audio-driver Dummy --script $Script $ScriptArgs"
 exit $LASTEXITCODE

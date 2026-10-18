@@ -401,6 +401,34 @@ Costs on High (1080p, quiet GPU): the kingdom 98 fps (castle alone 131-175).
 My calls to confirm: cells of land at the castle's level, 4 rings per cell, mountain 3.6 m a level, snow at 11 m; roads only between cell edge midpoints (no
 diagonal shortcuts); no rivers, lakes or waterfalls yet (the water is the sea); trees keep their species by neighbours, not by a saved choice.
 
+## 12. The combinations viewer (how many things can one click become?)
+
+Kevin 2026-10-18: "Can you analyze the combinations of this right now compared to the original Townscaper game?", then "can you do this analysis on a web page
+with drawings? even with 3d renders ... animations will be better too ... create a batch launcher for the viewer". `viewer-castle-scaper-realistic.bat` rebuilds
+`viewer/data.js`, serves `viewer/` (`tools/serve_viewer.py`: static and no-cache, the port is `castle-scaper-realistic-viewer` in the register) and opens `index.html`;
+`dump` counts everything again (headless, ~4 min), `render` redraws every picture (hidden Godot window, ~10 min). `viewer/` has a `.gdignore`: Godot never imports it.
+
+**The page** (plain HTML / CSS / JS, no libraries; white background since Kevin's 2026-10-18 request - the CSS variables in `style.css` plus `TH` in `util.js` for the colours the scripts draw with; `util.js`, `turntable.js`, `keyspace.js`, `neigh.js`, `charts.js`, `diagrams.js`, `main.js`): how each game reads a click
+(two animated plan diagrams), Townscaper's lookup (a draggable cube whose corners you click, its key after hiding buried corners and renaming colours, the 53 plain shapes,
+the colour histogram), this game's rules (an explorer over EVERY neighbourhood of a block: click the squares round it, or pick an outcome, and the real rule's answer
+and its 3D turntable appear), the 22 outcomes as turntable cards, real castles (bars, the growth curve, plan maps coloured by top kind that grow storey by storey, a castle
+turntable), one click (the game's own click-and-pop frames with rings on the blocks that changed, Townscaper's wave as an animation, a histogram), the landscape (a
+21-pair matrix with a rule and a close-up per pair) and the levers. Turntables are sprite sheets drawn on a canvas: they turn by themselves while on screen, speed up
+under the pointer, drag to turn by hand; swept views (near walls) play forward and back.
+
+**Numbers (2026-10-18).** Townscaper, read from the game's own ModuleLibrary asset (counts only: `townscaper-re/tools/unity_objects.py` finds it in `sharedassets1.assets`, `library_stats.py --json viewer/data/townscaper_library.json` counts it): **4,769 corner keys** (755 turned/mirrored), **2,071 modules** (1,609 distinct mesh-part sets from 892 mesh parts; 1,483 reached by some key), **128 decor modules**, props on 98 modules (226 placements), 14,519 side profiles, 59,089 (module, orientation) candidates over the keys (12.4 per key, median 9, up to 740). My rules-based count (`tools/townscaper_keyspace.py`, from the corner-key rules in `townscaper-re/notes`) reproduced 4,764 of the 4,769 keys exactly and none that the asset lacks (the other 5: the empty cell and four odd diagonal corners); the per-layer counts 15 / 546 / 4,254 sum to 4,815 only because the same key occurs in more than one kind of cell. 94% of the upper keys involve two or more colours. This game (`tools/combo_probe.gd`), castle and ocean only: one 4-neighbour point, storey 1: 14 bits = 16,384 patterns -> 2,664 classes -> 22 structural outcomes (ground floor 512 -> 110 -> 5; a second, skewed cell gave the same numbers), so 2,774 classes; 6,083 random-castle blocks: 36 structural outcomes, 308 distinct shape + roof + openings (about 390 exist), 1,436 full looks with props (about 2,430 exist), 81% of tops are wall walks; the neighbourhood decides 89% of the structure and 29% of the look; 79 clicks on 25 castles: 1.2 other blocks change shape, 2.5 change look, the farthest 13 m away; landscape: 635 column states (149 seen), 97 column outcomes, all 21 pairs of types react. **Head to head, castle and ocean only:** Townscaper has about 5 times as many finished pieces (2,071 vs about 390) and about 58 times as many that the arrangement of blocks chooses (2,071 vs 36); this game's extra variety is random decoration.
+
+**Pipeline.** `combo_probe.gd` (`--json=PATH`, `--phases=castle,ripple,exh,land,plans`, `--merge` to redo one phase) -> `viewer/data/combos.json`;
+`render_viewer.ps1` -> `analysis_render.gd` (instantiates `main.tscn`, builds each town from the dumped bit patterns - the subject block honey, its neighbours granite -
+and takes 24-frame turntables at 480x360 from a 960x720 window under the noon light; ripple cases replay the click with `pop_t0` set per frame, so the pop is
+deterministic; landscape spots are found by rule in the kingdom, landscape and random-country towns, and `_plan_camera` ray-casts the physics world to pick the pitch and
+the arc with room, so the camera never sits inside a wall or a mountain) -> `viewer/img/*.jpg` + `renders.json`; `build_viewer_data.py` -> `viewer/data.js`
+(`window.DATA`, so the page also opens straight from the disk). 33 MB of pictures: not in git yet (Kevin's call).
+
+**Gotchas.** A hidden preview pane throttles timers and IntersectionObserver: take two screenshots (the first forces a frame) before judging a section. `Object.assign`
+of a JSON field named like a lookup map shadowed the map. Untested: 3-, 5- and 6-sided cells (17% of the map), diagonal and two-storeys-up neighbours, colour seams.
+A pen-drawing variant of the renders (`--cs-pen=light --tag=_pen`) would work with the same pipeline.
+
 ## 10. Open (realistic look)
 
 - Done in round 2 (see section 6): masonry parallax, string courses, ivy, window glazing, displaced waves, swash foam, cirrus, rays, far islands,
