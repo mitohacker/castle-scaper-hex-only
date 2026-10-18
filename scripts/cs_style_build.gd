@@ -75,6 +75,55 @@ static func _top(b: CSBuild, v: int, k: int) -> void:
 			b.kinds[kk] = "flat"
 
 
+static func tiers(b: CSBuild, list: Array) -> void:
+	for kk: int in list:
+		_tier(b, kk / 64, kk % 64)
+
+
+static func _tier(b: CSBuild, v: int, k: int) -> void:
+	## The roof between a block and the smaller block of its column on top of it: a pent roof ringing the upper wall (a deck with a parapet on a set-back tower).
+	var x := _ctx(b, v, k)
+	if x == null:
+		return
+	var n := x.n
+	var up := b.level_outline(v, k + 1)
+	if up.size() != n:
+		return
+	var parts: Array = []
+	var rec: Dictionary = {}
+	if x.s == CSStyle.APARTMENT:
+		rec = _flat(x, parts, false)
+	else:
+		# the wall above, ordered like the outline and pulled 1 cm into itself: the roof's top ring ends inside that wall, with no crack between them
+		var inner := PackedVector2Array()
+		for j in n:
+			inner.append(up[(j + n - 1) % n])
+		var c := CSRoofs.centroid(inner)
+		var grow := PackedVector2Array()
+		for q in inner:
+			grow.append(c + (q - c) * 0.995)
+		var sh := CSRoofs.Shell.new()
+		var o := {"ovh": _ovh_for(x, 0.9), "H": 1.0, "profile": PROF_STRAIGHT, "lift": 0.0, "sub": 3, "tf": 0.2, "zones": x.zones(), "inner": grow}
+		match x.s:
+			CSStyle.CHINESE:
+				o = {"ovh": _ovh_for(x, x.rnd(3, 0.85, 1.1)), "H": x.rnd(2, 0.9, 1.3), "profile": PROF_CHINESE, "lift": x.rnd(4, 0.25, 0.4), "lift_u": 0.6, "sub": 3,
+					"tf": 0.24, "zones": x.zones(), "inner": grow}
+			CSStyle.JAPANESE:
+				o = {"ovh": _ovh_for(x, x.rnd(3, 0.8, 1.0)), "H": x.rnd(2, 0.7, 1.0), "profile": PROF_STRAIGHT, "lift": x.rnd(4, 0.05, 0.15), "lift_u": 0.6, "sub": 3,
+					"tf": 0.2, "zones": x.zones(), "inner": grow}
+			CSStyle.FANTASY:
+				o = {"ovh": _ovh_for(x, x.rnd(3, 0.25, 0.5)), "H": x.rnd(2, 0.6, 1.0), "profile": PROF_WITCH, "lift": x.rnd(4, 0.1, 0.25), "lift_u": 0.6, "sub": 3,
+					"tf": 0.16, "zones": x.zones(), "inner": grow}
+		rec = CSRoofs.pyramid(sh, x.poly, x.ys, o)
+		parts.append({"sh": sh, "inside": rec.centre})
+	if rec.is_empty():
+		return
+	var kk := CSTown.key(v, k)
+	b.kinds[kk] = "tier"
+	b.hats[kk] = {"kind": "tier", "style": x.s, "v": v, "k": k, "parts": parts, "seed": x.seed, "owner": x.owner, "anchor": x.anchor,
+		"top": float(rec.get("top", x.ys + 1.0)), "rec": rec, "poly": x.poly, "ys": x.ys}
+
+
 static func _pick(list: Array, h: float) -> String:
 	var total := 0.0
 	for e: Array in list:

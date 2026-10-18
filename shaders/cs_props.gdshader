@@ -137,6 +137,34 @@ void fragment() {
 		float weave = 0.92 + 0.08 * sin(uv.x * 240.0) * sin(uv.y * 240.0);
 		base = c * weave * (0.85 + 0.2 * vn2(uv * 18.0));
 		rough = 0.95;
+	} else if (zone == 14) {
+		// a paper lantern lit from inside: colour b picks red, white, amber or teal
+		int pc = cb % 4;
+		vec3 pcol = pc == 0 ? vec3(0.78, 0.1, 0.07) : (pc == 1 ? vec3(0.95, 0.92, 0.82) : (pc == 2 ? vec3(0.96, 0.6, 0.18) : vec3(0.3, 0.74, 0.68)));
+		base = lin(pcol) * (0.88 + 0.16 * vn2(uv * 30.0)) * (0.82 + 0.18 * smoothstep(0.0, 0.3, abs(fract(uv.y * 9.0) - 0.5)));
+		emis = base * (0.5 + 2.4 * night) * (0.92 + 0.08 * sin(TIME * 3.0 + seed * 7.0));
+		rough = 0.8;
+	} else if (zone == 15) {
+		// vermilion lacquer
+		base = lin(vec3(0.72, 0.13, 0.07)) * (0.85 + 0.2 * n_mid);
+		rough = 0.32;
+		spec = 0.6;
+	} else if (zone == 16) {
+		// galvanised sheet
+		base = lin(vec3(0.6, 0.62, 0.64)) * (0.82 + 0.3 * n_mid) * (0.95 + 0.1 * n_fine);
+		metal = 0.7;
+		rough = 0.45;
+	} else if (zone == 17) {
+		// gilt
+		base = lin(vec3(0.86, 0.68, 0.22)) * (0.9 + 0.2 * n_fine);
+		metal = 0.85;
+		rough = 0.3;
+	} else if (zone == 18) {
+		// an awning's second strip: colour b
+		vec3 c2 = lin(W_COL[cb]) * 0.95;
+		float weave2 = 0.92 + 0.08 * sin(uv.x * 240.0) * sin(uv.y * 240.0);
+		base = c2 * weave2 * (0.85 + 0.2 * vn2(uv * 18.0));
+		rough = 0.95;
 	}
 	ALBEDO = base;
 	ROUGHNESS = rough;

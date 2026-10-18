@@ -658,6 +658,7 @@ void surf_roof(int st, int ci, vec3 P, vec2 uv, float up, float fw, float lod, f
 		s.ao *= 0.78 + 0.22 * lap;
 	} else if (kind == 2) {
 		// thatch: straw strands down the slope, laid in overlapping courses, mossy on the shaded side
+		col = mix(col, vec3(dot(col, vec3(0.34))), 0.3);
 		float strand = vn2(vec2(uv.x * 38.0, uv.y * 1.6 + sd));
 		float strand2 = vn2(vec2(uv.x * 110.0, uv.y * 3.0 + sd * 2.0));
 		float course = fract(uv.y / 0.42);
@@ -679,6 +680,26 @@ void surf_roof(int st, int ci, vec3 P, vec2 uv, float up, float fw, float lod, f
 		s.metal = 0.6;
 		s.rough = 0.38;
 		s.grad.x += (fract(uv.x / 0.5 + 0.5) - 0.5) * 0.05 * (1.0 - lod);
+	} else if (kind == 8) {
+		// kawara: grey-silver pan and cover tiles in long rows, a soft sheen, a darker edge to every tile
+		float tw = 0.21;
+		float x = uv.x / tw;
+		float col_i = floor(x);
+		float lx = fract(x);
+		float barrel = sin(lx * 3.14159);
+		float rh = 0.3;
+		float row = floor(uv.y / rh);
+		float ly = fract(uv.y / rh);
+		float tone = h21(vec2(col_i, row) + sd);
+		vec3 silver = col + lin(vec3(0.24)) * 0.7;
+		b = silver * (0.8 + 0.3 * tone) * (0.94 + 0.12 * n_mid);
+		b *= mix(1.0, 0.62 + 0.5 * barrel, 1.0 - lod * 0.7);
+		b *= mix(1.0, 0.7 + 0.3 * smoothstep(0.0, 0.18, ly), 1.0 - lod * 0.7);
+		b = mix(b, lin(vec3(0.3, 0.34, 0.2)), smoothstep(0.66, 0.9, n_mid) * 0.12 * moss_k);
+		s.rough = mix(0.45, 0.2, wet_k);
+		s.spec = 0.55;
+		s.grad += vec2(cos(lx * 3.14159) * 0.28, (0.5 - ly) * 0.22) * (1.0 - lod);
+		s.ao *= 0.78 + 0.22 * barrel;
 	} else if (kind == 5) {
 		// copper gone green in streaks
 		float streak = vn2(vec2(uv.x * 14.0, uv.y * 0.8 + sd));

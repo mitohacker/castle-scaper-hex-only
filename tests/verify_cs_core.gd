@@ -32,6 +32,8 @@ func _init() -> void:
 	_stairs()
 	print("== castles audited")
 	_audits()
+	print("== building styles")
+	_styles()
 	print("== birds")
 	_birds()
 	print("== props")
@@ -356,6 +358,102 @@ func _audits() -> void:
 		"click-built castles grow arches, corbels, pillars and stairs (%s)" % str(seen))
 
 
+func _styles() -> void:
+	## The six building styles: starters, click-built towns of one style (closed), mixed towns (as closed as the castles), the hats, facades, tiers, doors and props.
+	var seen := {}                  # style -> {hat kind: count}
+	var tiers := 0
+	for n in ["houses", "apartments", "chinese", "japanese", "fantasy", "hamlet", "styles"]:
+		var t := CSTown.new()
+		CSStarter.make(n, grid, t)
+		var b := _built(t)
+		var tops := 0
+		var doors_ok := true
+		for kk: int in b.kinds:
+			tops += 1
+		ok(b.hats.size() >= 10, "%s: the tops have hats (%d hats, %d tops)" % [n, b.hats.size(), tops])
+		ok(b.facades >= 20, "%s: the walls are laid out in facades (%d)" % [n, b.facades])
+		var styled_ground := 0
+		var with_door := 0
+		for v: int in t.columns():
+			if t.has(v, 0) and t.style(v, 0) != CSStyle.CASTLE:
+				var has_open := false
+				var nb: PackedInt32Array = grid.nbrs[v]
+				var ol := b.level_outline(v, 0)
+				for i in nb.size():
+					if not b.filled(nb[i], 0) and ol[(i + nb.size() - 1) % nb.size()].distance_to(ol[i]) >= 2.6:
+						has_open = true
+				if has_open:
+					styled_ground += 1
+					if b.doors.has(v):
+						with_door += 1
+		doors_ok = with_door == styled_ground
+		ok(doors_ok, "%s: every house, pagoda or tower on the ground with an open side has its door (%d of %d)" % [n, with_door, styled_ground])
+		for kk: int in b.hats:
+			var h: Dictionary = b.hats[kk]
+			if not seen.has(h.style):
+				seen[h.style] = {}
+			seen[h.style][h.kind] = int(seen[h.style].get(h.kind, 0)) + 1
+			if h.kind == "tier":
+				tiers += 1
+		var pr := CSProps.new()
+		pr.build(b)
+		_props_clean(b, pr, n)
+	for s in range(1, CSStyle.COUNT):
+		var kinds: Dictionary = seen.get(s, {})
+		ok(kinds.size() >= 2, "%s: the starters grow at least two kinds of roof (%s)" % [CSStyle.KEYS[s], str(kinds)])
+	ok(tiers > 0, "free-standing towers of the styles step in as they rise (%d tier roofs)" % tiers)
+	# one style at a time: click-built towns stay closed
+	var worst := 0
+	for s in range(1, CSStyle.COUNT):
+		for seed in 3:
+			var t := CSTown.new()
+			CSStarter.random_growth(grid, t, seed, 60, s)
+			var b := _built(t)
+			var au := CFAudit.check(b.mesh, SKIP)
+			var bad := int(au.open_other) + int(au.non_manifold) + int(au.flipped) + int(au.t_junctions)
+			worst = maxi(worst, bad)
+			ok(bad == 0, "%s town %d: closed (open %d, non-manifold %d, flipped %d, T %d)" % [CSStyle.KEYS[s], seed, int(au.open_other), int(au.non_manifold), int(au.flipped), int(au.t_junctions)])
+	# mixed towns: castle blocks and every style together
+	var open_w := 0
+	var nm_w := 0
+	var defective := 0
+	var kinds_all := {}
+	for seed in 16:
+		var t := CSTown.new()
+		CSStarter.random_growth(grid, t, seed, 70, -1)
+		var b := _built(t)
+		var au := CFAudit.check(b.mesh, SKIP)
+		open_w = maxi(open_w, int(au.open_other))
+		nm_w = maxi(nm_w, int(au.non_manifold))
+		if int(au.open_other) + int(au.non_manifold) + int(au.t_junctions) > 0:
+			defective += 1
+		for kk: int in b.kinds:
+			kinds_all[b.kinds[kk]] = int(kinds_all.get(b.kinds[kk], 0)) + 1
+		var nan := false
+		for p in b.mesh.verts:
+			if is_nan(p.x) or is_nan(p.y) or is_nan(p.z):
+				nan = true
+				break
+		ok(not nan, "mixed town %d: a finite mesh" % seed)
+	print("   (mixed towns: %d of 16 with defects, worst open %d, worst non-manifold %d; tops %s)" % [defective, open_w, nm_w, str(kinds_all)])
+	ok(open_w <= 20 and nm_w <= 6, "mixed towns stay (nearly) closed (open %d, non-manifold %d)" % [open_w, nm_w])
+	ok(kinds_all.size() >= 12, "mixed towns grow many kinds of top (%d kinds)" % kinds_all.size())
+	# the same blocks give the same hats and the same props
+	var t2 := CSTown.new()
+	CSStarter.make("styles", grid, t2)
+	var ba := _built(t2)
+	var bb := _built(t2)
+	var same := ba.hats.size() == bb.hats.size()
+	for kk: int in ba.hats:
+		same = same and bb.hats.has(kk) and str(bb.hats[kk].kind) == str(ba.hats[kk].kind) and absf(float(bb.hats[kk].top) - float(ba.hats[kk].top)) < 1e-6
+	ok(same, "the same blocks give the same hats every time")
+	var pa := CSProps.new()
+	pa.build(ba)
+	var pb := CSProps.new()
+	pb.build(bb)
+	ok(pa.buffers() == pb.buffers() and pa.kept.size() > 0, "the styles' props are the same every time (%d kept)" % pa.kept.size())
+
+
 func _birds() -> void:
 	var t := CSTown.new()
 	CSStarter.make("castle", grid, t)
@@ -657,7 +755,7 @@ func _props() -> void:
 	print("   %s, %d instances" % [str(pr.stats), pr.instance_count()])
 	ok(b.mesh.tri_count() == tris and b.mesh.verts.size() == tris * 3, "the props leave the welded skin alone (%d tris)" % tris)
 	var few := []
-	for kn: String in CSProps.KINDS:
+	for kn: String in CSProps.KINDS.slice(0, CSProps.CASTLE_KINDS):
 		if int(pr.counts.get(kn, 0)) < PROPS_MIN:
 			few.append("%s %d" % [kn, int(pr.counts.get(kn, 0))])
 	ok(few.is_empty(), "the castle starter gets at least %d of every kind of prop (short: %s)" % [PROPS_MIN, str(few)])

@@ -572,8 +572,12 @@ static func pyramid(sh: Shell, poly_in: PackedVector2Array, ys: float, o: Dictio
 			var idn := (idx + 1) % total
 			sh.tri(cc, last[idx], last[idn], Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, g_cap)
 	var apex_pt := v3(cen + bend, ys + H)
+	var tips := PackedVector3Array()           # the lifted corners' lower edge, where a lantern hangs
+	for j in n:
+		if lc[j] > 0.5 and lift > 0.05:
+			tips.append(v3(outer[j], ys + lift))
 	return {"kind": "pyramid", "ys": ys, "H": H, "centre2": cen, "apex": apex_pt, "outer": outer, "inner": win, "poly": poly, "profile": prof,
-		"top": ys + H, "tfv": tfv, "truncated": truncated, "centre": v3(cen, ys + H * 0.3)}
+		"top": ys + H, "tfv": tfv, "truncated": truncated, "centre": v3(cen, ys + H * 0.3), "tips": tips, "lift": lift}
 
 
 static func pyramid_height(rec: Dictionary, p: Vector2) -> float:

@@ -198,7 +198,38 @@ func polys_of(v: int, poly: PackedVector2Array) -> Array:
 	return out
 
 
+func tier_scale(v: int, k: int) -> float:
+	## How far level k of a styled column steps in from the level below (1 = not at all): only a block with nothing beside it and nothing hanging over its
+	## top, on a styled block of its own column, in a style that tiers (CSStyle.TIERS), in the columns that do.
+	if k < 1 or not town.has(v, k) or not town.has(v, k - 1):
+		return 1.0
+	var s := town.style(v, k)
+	if s == CSStyle.CASTLE or town.style(v, k - 1) == CSStyle.CASTLE or not CSStyle.TIERS.has(s):
+		return 1.0
+	var tr: Array = CSStyle.TIERS[s]
+	if k < int(tr[2]) or h01(v, 31) >= float(tr[1]):
+		return 1.0
+	if s == CSStyle.APARTMENT and town.has(v, k + 1):
+		return 1.0
+	if not isolated(v, k):
+		return 1.0
+	for u in grid.nbrs[v]:
+		if filled(u, k + 1):
+			return 1.0
+		if castle_at(u, k - 1) and not filled(u, k):
+			return 1.0                   # a castle wall walk beside it: its parapet ends against this wall, which has to stay on the cell's side
+	return 1.0 - float(tr[0])
+
+
 func level_outline(v: int, k: int) -> PackedVector2Array:
+	var f := tier_scale(v, k)
+	if f < 1.0:
+		var base := level_outline(v, k - 1)
+		var c := CSRoofs.centroid(base)
+		var out := PackedVector2Array()
+		for q in base:
+			out.append(c + (q - c) * f)
+		return out
 	return outline(v, func(u: int) -> bool: return filled(u, k))
 
 
@@ -388,13 +419,24 @@ func _arch_fit(v: int, k: int) -> Dictionary:
 
 
 func _find_doors() -> void:
-	## The side of each ground block that gets its door: the first open side facing land (85%, seeded by the side).
+	## The side of each ground block that gets its door: the first open side facing land (85%, seeded by the side). A house, pagoda or tower of
+	## the styles always gets one if it has an open side long enough: the side facing land or a courtyard first, else the sea (a quay door).
 	for v: int in town.columns():
 		if not grid.buildable(v) or not town.has(v, 0):
 			continue
 		var nb: PackedInt32Array = grid.nbrs[v]
 		var rnd := is_round(v, 0)
 		var ol := level_outline(v, 0)
+		if town.style(v, 0) != CSStyle.CASTLE:
+			var best := -1.0
+			for i in nb.size():
+				if filled(nb[i], 0) or ol[(i + nb.size() - 1) % nb.size()].distance_to(ol[i]) < 2.6:
+					continue
+				var score := h01(v, i, 8) + (1.0 if land.has(nb[i]) else 0.0)
+				if score > best:
+					best = score
+					doors[v] = i
+			continue
 		for i in nb.size():
 			var u := nb[i]
 			if filled(u, 0):
@@ -630,11 +672,17 @@ func _bodies() -> void:
 func _tops() -> void:
 	var walks := {}                     # level -> [vertices]
 	var styled: Array = []              # tops of the building styles (their hats: CSStyleBuild)
+	var tiers: Array = []               # blocks of the styles with a smaller block of their column on top (the roof between the two)
 	for v: int in town.columns():
 		if not grid.buildable(v):
 			continue
 		for k in range(0, top_of(v) + 1):
-			if not town.has(v, k) or filled(v, k + 1):
+			if not town.has(v, k):
+				continue
+			if town.style(v, k) != CSStyle.CASTLE and town.has(v, k + 1) and tier_scale(v, k + 1) < 1.0:
+				tiers.append(CSTown.key(v, k))
+				continue
+			if filled(v, k + 1):
 				continue
 			var kk := CSTown.key(v, k)
 			if town.style(v, k) != CSStyle.CASTLE:
@@ -701,6 +749,8 @@ func _tops() -> void:
 		_stair(s)
 	if not styled.is_empty():
 		CSStyleBuild.tops(self, styled)
+	if not tiers.is_empty():
+		CSStyleBuild.tiers(self, tiers)
 
 
 func _add_cap(v: int, k: int, poly: PackedVector2Array, h: float, banner: bool) -> void:
@@ -1215,7 +1265,11 @@ func _door(v: int, surface: Vector2, out: Vector2, y: float, sty: int = 0) -> vo
 	var lz := CFMesh.Z_DOOR if sty == CSStyle.CASTLE else CSStyle.trim_zone(sty)
 	var leaf := plan.new_stack(CFPlan.OP_ADD, 70000 + v, {"zone": lz, "top_zone": lz, "owner": v + 1, "prio": 12,
 		"flags": CFMesh.F_PLAIN, "label": "door leaf", "seed": colour_seed(town.colour(v, 0))})
-	plan.add_layer(leaf, CFShapes.rect(surface - out * (depth - 0.06), out, 0.08, 0.55), y, y + 2.2)
+	if sty == CSStyle.CASTLE:
+		plan.add_layer(leaf, CFShapes.rect(surface - out * (depth - 0.06), out, 0.08, 0.55), y, y + 2.2)
+	else:
+		# a door of the styles: its back face is the recess's own back wall (a leaf reaching 2 cm behind it puts two corners exactly one weld distance apart)
+		plan.add_layer(leaf, CFShapes.rect(surface - out * (depth - 0.07), out, 0.07, 0.55), y, y + 2.2)
 
 
 func _hats() -> void:

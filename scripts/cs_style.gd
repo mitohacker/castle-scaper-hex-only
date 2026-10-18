@@ -18,6 +18,10 @@ const PAVE := 50
 const GABLE := 60               # the triangle of wall under a gable roof (not part of the walls' bays)
 const MAX_TIERS := 4
 
+## Tiers: a free-standing column steps in as it rises (pagodas, tapering towers, set-back towers): [step per tier, share of columns that do it, first level that steps].
+## An apartment tower only steps in once, at its top.
+const TIERS := {CHINESE: [0.12, 0.85, 1], JAPANESE: [0.1, 0.8, 1], FANTASY: [0.07, 0.55, 1], APARTMENT: [0.2, 0.55, 2]}
+
 ## Per style: how many metres of a level's wall one window row spans (an apartment level shows two floors).
 const ROWS := [1, 1, 2, 1, 1, 1, 1]
 
@@ -133,6 +137,7 @@ const ROOF_ZINC := 4
 const ROOF_COPPER := 5
 const ROOF_SHINGLE := 6
 const ROOF_SCALE := 7
+const ROOF_KAWARA := 8
 
 
 static func roof_pattern(s: int, c: int) -> int:
@@ -149,12 +154,10 @@ static func roof_pattern(s: int, c: int) -> int:
 		return ROOF_ZINC
 	if nm.contains("copper"):
 		return ROOF_COPPER
-	if nm.contains("hinoki"):
-		return ROOF_SHINGLE
-	if s == JAPANESE and (nm.contains("kawara") or nm.contains("grey") or nm.contains("blue")):
-		return ROOF_CLAY
-	if nm.contains("black") and s == CHINESE:
-		return ROOF_CLAY
+	if s == JAPANESE:
+		return ROOF_KAWARA
+	if s == CHINESE and (nm.contains("black") or nm.contains("grey tiles")):
+		return ROOF_KAWARA
 	return ROOF_CLAY
 
 

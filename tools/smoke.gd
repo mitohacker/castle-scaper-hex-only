@@ -55,7 +55,11 @@ func _init() -> void:
 		print("   audit ", au)
 		var pr := CSProps.new()
 		pr.build(b)
-		print("   props %s %s" % [str(pr.counts), str(pr.stats)])
+		var nz := {}
+		for kn: String in pr.counts:
+			if int(pr.counts[kn]) > 0:
+				nz[kn] = pr.counts[kn]
+		print("   props %s %.0f ms" % [str(nz), float(pr.stats.ms)])
 		for i in mini(oi.size(), 4):
 			print("     open ", oi[i])
 		for i in mini(ni.size(), 4):

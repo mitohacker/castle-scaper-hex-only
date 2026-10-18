@@ -89,7 +89,18 @@ static func check(mesh: CFMesh, skip_zones: Array = []) -> Dictionary:
 		elif n > 2:
 			non_manifold += 1
 			var tt2: int = edge_tri[key]
-			nm_info.append("%s -> %s x%d zone %d %s" % [wpos[key / big], wpos[key % big], n, roundi(mesh.cols[tt2].r * 255.0), "owner %d" % int(mesh.cust1[tt2 * 4 + 3])])
+			var who := ""
+			if nm_info.size() < 8:
+				for tq in range(0, verts.size(), 3):
+					var ia := vid[tq]
+					var ib := vid[tq + 1]
+					var ic := vid[tq + 2]
+					var ea: int = key / big
+					var eb: int = key % big
+					if (ia == ea or ib == ea or ic == ea) and (ia == eb or ib == eb or ic == eb):
+						var fn := (verts[tq + 1] - verts[tq]).cross(verts[tq + 2] - verts[tq]).normalized()
+						who += " [z%d o%d n(%.2f %.2f %.2f)]" % [roundi(mesh.cols[tq].r * 255.0), int(mesh.cust1[tq * 4 + 3]), fn.x, fn.y, fn.z]
+			nm_info.append("%s -> %s x%d zone %d %s%s" % [wpos[key / big], wpos[key % big], n, roundi(mesh.cols[tt2].r * 255.0), "owner %d" % int(mesh.cust1[tt2 * 4 + 3]), who])
 	var flipped := 0
 	var flip_info := []
 	for dk: int in directed:

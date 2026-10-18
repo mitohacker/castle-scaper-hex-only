@@ -18,9 +18,10 @@ const EPS := 0.005              # boxes that overlap by less than this are apart
 const EMBED := 0.12             # how far a wall prop's mesh reaches behind its mount plane
 const CELL := 2.0               # spatial hash cell (m)
 
-enum { FRAME, SHUTTERS, FLOWERS, SHIELD, BANNER, TORCH, CHIMNEY, HOARDING, CORBELS, CRATES, BARRELS, BUNTING, STRING, IVY }
+enum { FRAME, SHUTTERS, FLOWERS, SHIELD, BANNER, TORCH, CHIMNEY, HOARDING, CORBELS, CRATES, BARRELS, BUNTING, STRING, IVY, ROOFGEAR, PAPER, TORII, AWNING }
 const KINDS := ["frame", "shutters", "flowers", "shield", "banner", "torch", "chimney", "hoarding", "corbels", "crates",
-	"barrels", "bunting", "string", "ivy"]
+	"barrels", "bunting", "string", "ivy", "roofgear", "paper", "torii", "awning"]
+const CASTLE_KINDS := 14          # the first kinds are the castle's, the rest belong to the building styles (CSStyleProps)
 
 # meshes (one MultiMesh each)
 const M_FRAME := 0
@@ -41,7 +42,7 @@ const M_FLAG := 14
 const M_HOOK := 15
 const M_STRING := 16            # a moulded string course, 1 m long (scaled to the wall)
 const M_IVY := 17               # a patch of ivy 1 m wide, 1 m high (scaled to the wall)
-const MESH_COUNT := 18
+const MESH_COUNT := 26             # 0..17 here, 18..25 in CSStyleProps
 
 # paint zones (COLOR.r * 255), read by shaders/cs_props.gdshader
 const P_OWN := 0                # the block's colour (instance custom x)
@@ -58,6 +59,11 @@ const P_ROPE := 10
 const P_EARTH := 11
 const P_SECOND_PLANKS := 12     # shutters: planks painted the second colour
 const P_CLOTH := 13             # bunting: the block's colour, a little deeper (pastel walls make pale flags)
+const P_PAPER := 14             # a paper lantern, lit from inside (colour b: 0 red, 1 white, 2 amber, 3 teal)
+const P_LACQUER := 15           # vermilion lacquer
+const P_METAL := 16             # galvanised sheet: air conditioners, tanks, masts
+const P_GOLD := 17              # gilt
+const P_CLOTH2 := 18            # an awning's second strip: colour b, as P_CLOTH is colour a
 
 const SHUTTER_COLS := [8, 9, 7, 4, 11, 6, 2]
 const BLOOM_COLS := [4, 5, 2, 6, 3, 0]
@@ -193,6 +199,7 @@ func build(cb: CSBuild) -> void:
 	_courts()
 	_bunting()
 	_ornaments()
+	CSStyleProps.build(self)
 	var t1 := Time.get_ticks_usec()
 	_solve()
 	var t2 := Time.get_ticks_usec()
@@ -396,7 +403,7 @@ func _mount(op: Dictionary, dx: float) -> Array:
 func _doors() -> void:
 	## A lantern on a bracket beside every door, now and then one on each side.
 	for op: Dictionary in b.openings:
-		if str(op.kind) != "door":
+		if str(op.kind) != "door" or int(op.get("style", 0)) != CSStyle.CASTLE:
 			continue
 		var v: int = op.v
 		var k: int = op.k
@@ -1128,8 +1135,8 @@ class MB:
 			var j := (i + 1) % n
 			poly([l[i], l[j], r[j], r[i]], c)
 
-	func lathe(prof: Array, sides: int, z: int) -> void:
-		## A surface of revolution round the y axis, prof = [Vector2(radius, y)] going up, smooth normals.
+	func lathe(prof: Array, sides: int, z: int, org: Vector3 = Vector3.ZERO) -> void:
+		## A surface of revolution round the y axis (through org), prof = [Vector2(radius, y)] going up, smooth normals.
 		zone = z
 		var col := Color(float(zone) / 255.0, 0.0, 0.0, 1.0)
 		for k in range(prof.size() - 1):
@@ -1139,8 +1146,8 @@ class MB:
 			for i in sides:
 				var a0 := TAU * float(i) / float(sides)
 				var a1 := TAU * float(i + 1) / float(sides)
-				var q := [Vector3(cos(a0) * p0.x, p0.y, sin(a0) * p0.x), Vector3(cos(a1) * p0.x, p0.y, sin(a1) * p0.x),
-					Vector3(cos(a1) * p1.x, p1.y, sin(a1) * p1.x), Vector3(cos(a0) * p1.x, p1.y, sin(a0) * p1.x)]
+				var q := [org + Vector3(cos(a0) * p0.x, p0.y, sin(a0) * p0.x), org + Vector3(cos(a1) * p0.x, p0.y, sin(a1) * p0.x),
+					org + Vector3(cos(a1) * p1.x, p1.y, sin(a1) * p1.x), org + Vector3(cos(a0) * p1.x, p1.y, sin(a0) * p1.x)]
 				var nn := [Vector3(cos(a0) * pn.x, pn.y, sin(a0) * pn.x), Vector3(cos(a1) * pn.x, pn.y, sin(a1) * pn.x)]
 				var uv := [Vector2(a0 * p0.x, p0.y), Vector2(a1 * p0.x, p0.y), Vector2(a1 * p1.x, p1.y), Vector2(a0 * p1.x, p1.y)]
 				var fn := ((q[1] as Vector3) - (q[0] as Vector3)).cross((q[2] as Vector3) - (q[0] as Vector3))
@@ -1309,5 +1316,7 @@ static func make_meshes() -> Array:
 				mb.prism(PackedVector2Array([Vector2(-0.2, 0.0), Vector2(0.2, 0.0), Vector2(0.0, -0.42)]), -0.005, 0.005, P_CLOTH, P_CLOTH, P_CLOTH)
 			M_HOOK:
 				mb.box(Vector3(-0.03, -0.03, -EMBED), Vector3(0.03, 0.04, 0.07), P_IRON)
+			_:
+				CSStyleProps.make_mesh(m, mb)
 		out.append(mb.commit())
 	return out
