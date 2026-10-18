@@ -29,7 +29,7 @@ const ROUND_SIDES := 16
 const STUB_BITE := 0.15         # how far a parapet stub reaches into the taller block it ends against
 const ARCH_PIER := 0.3          # the thinnest pier between an arch and the block it springs from (m)
 const ARCH_MIN_W := 0.7         # the narrowest half span worth an arch
-const ARCH_MAX_W := 2.0
+const ARCH_MAX_W := 1.1         # half the widest passage: on the regular grid two arches side by side keep a wall of 0.3 m between them
 const ARCH_BAND := 0.4          # solid band between an arch's crown and the block it carries
 const ARCH_FR := [0.0, 0.35, 0.6, 0.78, 0.91, 1.0]          # stepped arch: heights of the courses (x the rise) ...
 const ARCH_FR_SMALL := [0.0, 0.45, 0.7, 0.87, 1.0]          # ... fewer on narrow arches, so no course is under 4 cm
@@ -1147,7 +1147,9 @@ func _stair_fit(c: int, u: int, kl: int, low: Dictionary, up: Dictionary) -> Dic
 		elif land.get(w, "") == "court":
 			lim[mm] = 0.1
 		elif int(doors.get(w, -1)) == grid.index_of(w, c):
-			lim[mm] = 1.5
+			# a door on one of the two sides next to the flight's: those lines start 0.7 m from its edge on a regular hex cell (the
+			# door itself is 1.6 m away), so they only have to be cleared by 0.7 m; any other door side by 1.5 m
+			lim[mm] = 0.7 if (mm == (ic + 1) % n or mm == (ic + n - 1) % n) else 1.5
 		else:
 			lim[mm] = 0.15
 	var b0 := raw0 + dir * (mid - hw)

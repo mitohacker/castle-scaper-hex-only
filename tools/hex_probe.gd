@@ -1,7 +1,7 @@
 extends SceneTree
-## Stress test of the all-hexagon grid: random click-built castles (and mixed-style towns) over several grid seeds and jitters, plus
-## towers and walls on every cell along the board's edge, each audited for open edges, non-manifold edges, flipped faces and T-junctions.
-## Run: Godot --headless --path . --script res://tools/hex_probe.gd -- --jitter=0.25 --seeds=4 --towns=16
+## Stress test of the regular hex grid: random click-built castles (and mixed-style towns), plus towers and walls on every cell along
+## the board's edge, each audited for open edges, non-manifold edges, flipped faces and T-junctions.
+## Run: Godot --headless --path . --script res://tools/hex_probe.gd -- --towns=40 [--clicks=70] [--styles=0,-1,1,2,3,4,5,6] [--from=0]
 
 
 func _initialize() -> void:
@@ -9,30 +9,32 @@ func _initialize() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--"):
 			opt[a.substr(2).get_slice("=", 0)] = a.get_slice("=", 1) if "=" in a else "1"
-	var jitter := float(opt.get("jitter", CSGrid.default_jitter))
-	var seeds := int(opt.get("seeds", 3))
-	var towns := int(opt.get("towns", 16))
+	var towns := int(opt.get("towns", 40))
+	var clicks := int(opt.get("clicks", 70))
+	var first := int(opt.get("from", 0))
+	var styles: Array = []
+	for st in str(opt.get("styles", "0,-1")).split(","):
+		styles.append(int(st))
 	var total := 0
 	var bad := 0
 	var worst_open := 0
 	var worst_nm := 0
 	var pieces := {}
 	var stairs := 0
-	for gs in seeds:
+	for gs in 1:
 		var grid := CSGrid.new()
-		grid.jitter = jitter
-		grid.generate(gs + 1)
-		for style in [0, -1]:
-			for s in towns:
+		grid.generate()
+		for style in styles:
+			for s in range(first, first + towns):
 				var t := CSTown.new()
-				CSStarter.random_growth(grid, t, s, 70, style)
+				CSStarter.random_growth(grid, t, s, clicks, style)
 				var r := _audit(grid, t)
 				total += 1
 				worst_open = maxi(worst_open, r[0])
 				worst_nm = maxi(worst_nm, r[1])
 				if r[0] + r[1] + r[2] + r[3] > 0:
 					bad += 1
-					print("  defect: grid %d style %d town %d: open %d nm %d flipped %d T %d" % [gs + 1, style, s, r[0], r[1], r[2], r[3]])
+					print("  defect: style %d town %d: open %d nm %d flipped %d T %d" % [style, s, r[0], r[1], r[2], r[3]])
 				for k: String in (r[4] as Dictionary):
 					pieces[k] = int(pieces.get(k, 0)) + int(r[4][k])
 				stairs += int(r[5])
@@ -61,11 +63,11 @@ func _initialize() -> void:
 			total += 1
 			if r[0] + r[1] + r[2] + r[3] > 0:
 				bad += 1
-				print("  defect: grid %d edge ring mode %d (%d cells): open %d nm %d flipped %d T %d" % [gs + 1, mode, edge.size(), r[0], r[1], r[2], r[3]])
+				print("  defect: edge ring mode %d (%d cells): open %d nm %d flipped %d T %d" % [mode, edge.size(), r[0], r[1], r[2], r[3]])
 			worst_open = maxi(worst_open, r[0])
 			worst_nm = maxi(worst_nm, r[1])
 			stairs += int(r[5])
-	print("jitter %.2f: %d towns, %d with defects, worst open %d, worst non-manifold %d, stairs %d, pieces %s" % [jitter, total, bad, worst_open, worst_nm, stairs, str(pieces)])
+	print("%d towns, %d with defects, worst open %d, worst non-manifold %d, stairs %d, pieces %s" % [total, bad, worst_open, worst_nm, stairs, str(pieces)])
 	quit(0)
 
 

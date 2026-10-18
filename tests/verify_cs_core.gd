@@ -110,15 +110,39 @@ func _grid() -> void:
 				shared_bad += 1
 	ok(edge_cells > 50 and edge_hex == edge_cells, "the cells along the board's edge are hexagons too (%d of %d)" % [edge_hex, edge_cells])
 	ok(shared_bad == 0, "every cell corner is shared by three cells that all touch (%d bad)" % shared_bad)
-	var sides := []
+	# regular: every cell has six equal sides (5 / sqrt(3) = 2.887 m), 120 degree corners, the same area, a flat side facing east and west
+	var side_lo := INF
+	var side_hi := 0.0
+	var ang_lo := 360.0
+	var ang_hi := 0.0
+	var area_lo := INF
+	var area_hi := 0.0
+	var turned := 0
 	for v in grid.verts.size():
-		if grid.buildable(v):
-			var dv := grid.dual(v)
-			for i in dv.size():
-				sides.append(dv[i].distance_to(dv[(i + 1) % dv.size()]))
-	sides.sort()
-	ok(float(sides[sides.size() * 9 / 10]) > float(sides[sides.size() / 10]) * 1.2 and float(sides[0]) > 0.8,
-		"the hexagons are irregular, not a perfect lattice (side p10 %.2f m, p90 %.2f m)" % [sides[sides.size() / 10], sides[sides.size() * 9 / 10]])
+		if not grid.buildable(v):
+			continue
+		var dv := grid.dual(v)
+		var nd := dv.size()
+		area_lo = minf(area_lo, CFTri.area(dv))
+		area_hi = maxf(area_hi, CFTri.area(dv))
+		var has_east := false
+		for i in nd:
+			var e0 := dv[(i + 1) % nd] - dv[i]
+			var e1 := dv[(i + 2) % nd] - dv[(i + 1) % nd]
+			side_lo = minf(side_lo, e0.length())
+			side_hi = maxf(side_hi, e0.length())
+			var turn := rad_to_deg(absf(e0.angle_to(e1)))
+			ang_lo = minf(ang_lo, 180.0 - turn)
+			ang_hi = maxf(ang_hi, 180.0 - turn)
+			if absf(e0.x) < 1e-4 and absf(absf(e0.y) - 5.0 / sqrt(3.0)) < 1e-3:
+				has_east = true
+		if not has_east:
+			turned += 1
+	ok(side_hi - side_lo < 2e-3 and absf(side_lo - 5.0 / sqrt(3.0)) < 2e-3,
+		"every side of every cell is 5 / sqrt(3) m long (%.4f .. %.4f)" % [side_lo, side_hi])
+	ok(ang_lo > 119.99 and ang_hi < 120.01, "every corner is 120 degrees (%.3f .. %.3f)" % [ang_lo, ang_hi])
+	ok(area_hi - area_lo < 0.01 and absf(area_lo - 25.0 * sqrt(3.0) / 2.0) < 0.01, "every cell has the same area, 21.65 m2 (%.3f .. %.3f)" % [area_lo, area_hi])
+	ok(turned == 0, "every cell has a flat side facing east and west, pointy-top (%d turned)" % turned)
 	var concave := 0
 	for v in grid.verts.size():
 		if grid.buildable(v) and not CSBuild.convex(grid.dual(v)):

@@ -1,11 +1,11 @@
 # Castle Scaper Hex
 
-Castle Scaper Realistic on an **organic hex grid**: a copy of `castle-scaper-realistic` (2026-10-18, Kevin: "duplicate castle-scaper-realistic
-and experiment with a hex grid for an organic grid instead of the cube grids we have now ... just do hex grid organic randomness and build
-castles and let me see how it looks"). Every cell is a hexagon (all of them: no pentagons or heptagons), irregular because every point of the lattice is nudged a little (`--cs-jitter=`, 0 is a perfect lattice), so towers are
-hexagonal prisms and walls zig-zag; every cell corner is shared by three cells that all touch, so two blocks never meet at only a corner.
+Castle Scaper Realistic on a **regular hex grid**: a copy of `castle-scaper-realistic` (2026-10-18, Kevin: "duplicate castle-scaper-realistic
+and experiment with a hex grid ... and build castles and let me see how it looks"). Every cell is a regular hexagon (six equal sides, 120 degree
+corners, pointy-top), all of them, along the board's edge too, so towers are hexagonal prisms and walls zig-zag; every cell corner is shared by
+three cells that all touch, so two blocks never meet at only a corner.
 See SPEC section 0. `shots/hex_grid_plan.svg` is a plan of the cells (every one a hexagon). The other `shots/hex_*` pictures, `hex_gallery.jpg` among them,
-were rendered before the flips were removed (their coasts still show pentagons and heptagons): re-take them with `tools/shots.ps1`.
+were rendered before the flips were removed (their coasts still show the older, irregular cells): re-take them with `tools/shots.ps1`.
 
 The rest is Castle Scaper Realistic's:
 
@@ -29,10 +29,10 @@ verify-castle-scaper-hex.bat      :: compile, core suite (headless), editor suit
 | | |
 |---|---|
 | left click | put a block (on the sea, on top, or beside: the face under the mouse decides) |
-| **left drag** | **paint**: hold the button and move, and a block goes on every new cell the mouse passes over (not stacked on what the stroke just built); one Ctrl+Z takes the whole stroke back |
+| **left drag** | **preview, then build on release**: hold the button and move, and a translucent ghost shows every block the stroke would place (moving back over cells takes them off); nothing is built while the button is down. Release builds them all as one undo step. Esc or the right button cancels. A plain click still builds one block |
 | right click | take it away |
 | W A S D (arrows) / Q E / Shift | move the view across the map / turn it / three times faster |
-| right drag / middle drag / wheel | turn / move / zoom (a left drag paints, so it no longer moves the view; a right drag turns, so there is no drag-to-remove: right-click each block) |
+| right drag / middle drag / wheel | turn / move / zoom (a left drag previews and builds, so it no longer moves the view; a right drag turns, so there is no drag-to-remove: right-click each block) |
 | 1-0 - = or the swatches | material |
 | Ctrl+Z / Ctrl+Y / Ctrl+S / Ctrl+N | undo / redo / save / empty sea |
 | L / G | the light: golden hour, overcast, bright noon, dusk / the quality: low, medium, high, ultra |

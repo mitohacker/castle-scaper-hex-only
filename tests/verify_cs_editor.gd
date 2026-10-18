@@ -1,7 +1,7 @@
 extends SceneTree
 ## The editor driven like a player (windowed, through the memory guard): real mouse and key events pushed into the
 ## window, the castle building on its worker thread. A click on the sea puts a block down, a click on its roof stacks
-## another, a right-click takes it away, Ctrl+Z / Ctrl+Y undo and redo, a left drag paints a row of blocks (one undo step), a
+## another, a right-click takes it away, Ctrl+Z / Ctrl+Y undo and redo, a left drag previews a row of blocks and the release builds them (one undo step), a
 ## middle drag moves the camera, a right drag turns it, a swatch only picks a colour, and ten quick clicks all land in the shown castle.
 ## Run: Godot --path . --audio-driver Dummy --resolution 1600x900 --script res://tests/verify_cs_editor.gd -- --cs-fresh
 
@@ -82,20 +82,18 @@ func _path(pts: Array) -> Array:
 	return out
 
 
-func _drag(button: int, path: Array) -> void:
-	## Press at the path's start, move along it (a frame between samples), release at its end.
-	var first: Vector2 = path[0]
-	var mv0 := InputEventMouseMotion.new()
-	mv0.position = first
-	mv0.global_position = first
-	root.push_input(mv0)
-	var press := InputEventMouseButton.new()
-	press.button_index = button
-	press.pressed = true
-	press.position = first
-	press.global_position = first
-	root.push_input(press)
+func _button(button: int, pressed: bool, pos: Vector2) -> void:
+	var e := InputEventMouseButton.new()
+	e.button_index = button
+	e.pressed = pressed
+	e.position = pos
+	e.global_position = pos
+	root.push_input(e)
 	await process_frame
+
+
+func _move_along(button: int, path: Array) -> void:
+	## The mouse moving along the path (a frame between samples) with the button held.
 	for i in range(1, path.size()):
 		var mv := InputEventMouseMotion.new()
 		mv.position = path[i]
@@ -104,14 +102,18 @@ func _drag(button: int, path: Array) -> void:
 		mv.button_mask = 1 << (button - 1)
 		root.push_input(mv)
 		await process_frame
-	var last: Vector2 = path[path.size() - 1]
-	var rel := InputEventMouseButton.new()
-	rel.button_index = button
-	rel.pressed = false
-	rel.position = last
-	rel.global_position = last
-	root.push_input(rel)
-	await process_frame
+
+
+func _drag(button: int, path: Array) -> void:
+	## Press at the path's start, move along it, release at its end.
+	var first: Vector2 = path[0]
+	var mv0 := InputEventMouseMotion.new()
+	mv0.position = first
+	mv0.global_position = first
+	root.push_input(mv0)
+	await _button(button, true, first)
+	await _move_along(button, path)
+	await _button(button, false, path[path.size() - 1])
 
 
 func _sea_pair(wild: bool) -> Array:
@@ -263,8 +265,9 @@ func _run() -> void:
 	await _key(KEY_Y, true)
 	await _settle()
 	ok(not town.has(spot, 1), "Ctrl+Y takes it away again")
-	# a left drag PAINTS: a block on every new cell the mouse passes over, none stacked on what the stroke just built,
-	# one undo step for the whole stroke; a middle drag moves the camera, a right drag turns it, both build nothing
+	# a left drag PREVIEWS: a translucent ghost of every block the stroke would place, following the pointer (moving back takes
+	# cells off it), nothing built while the button is down; the release builds them as ONE undo step; a plain click builds one
+	# block; Esc or the right button cancels; middle drag moves the camera, right drag turns it
 	var n2 := town.size()
 	var pair := _sea_pair(false)
 	ok(pair.size() == 2, "found two spots on the sea to drag between")
@@ -273,43 +276,70 @@ func _run() -> void:
 		var pb: Vector2 = pair[1]
 		var hist0: int = main.history.size()
 		var goal_l: Vector3 = main.cam_goal
-		await _drag(MOUSE_BUTTON_LEFT, _path([pa, pb]))
+		var mv0 := InputEventMouseMotion.new()
+		mv0.position = pa
+		mv0.global_position = pa
+		root.push_input(mv0)
+		await _button(MOUSE_BUTTON_LEFT, true, pa)
+		await _move_along(MOUSE_BUTTON_LEFT, _path([pa, pb]))
+		var shown_out: int = main.stroke_cols.size()
+		ok(main.stroke_active and shown_out >= 2 and (main.stroke_mi as MeshInstance3D).visible and (main.stroke_mi.mesh as ArrayMesh).get_surface_count() == shown_out,
+			"holding the button and dragging shows a ghost of every cell on the way (%d previewed)" % shown_out)
+		ok(town.size() == n2 and main.history.size() == hist0, "nothing is built while the button is down")
+		ok(not (main.ghost_mi as MeshInstance3D).visible, "the single hover ghost steps aside for the preview")
+		ok((main.cam_goal as Vector3).distance_to(goal_l) < 0.01, "a left drag does not move the camera")
+		await _move_along(MOUSE_BUTTON_LEFT, _path([pb, pa]))
+		var shown_back: int = main.stroke_cols.size()
+		ok(shown_back >= 1 and shown_back < shown_out and town.size() == n2, "moving back over the cells takes them off the preview (%d -> %d)" % [shown_out, shown_back])
+		await _move_along(MOUSE_BUTTON_LEFT, _path([pa, pb]))
+		ok(main.stroke_cols.size() == shown_out, "moving on again puts them back (%d)" % main.stroke_cols.size())
+		var planned: Array = main.stroke_cols.duplicate()
+		await _button(MOUSE_BUTTON_LEFT, false, pb)
 		await _settle()
 		var painted := town.size() - n2
-		ok(painted >= 2, "a left drag across the sea paints blocks on the cells it passes over (%d)" % painted)
+		ok(not main.stroke_active and not (main.stroke_mi as MeshInstance3D).visible, "the release ends the stroke and hides the preview")
+		ok(painted == planned.size(), "the release builds exactly the previewed blocks (%d of %d)" % [painted, planned.size()])
+		var all_there := true
+		for col: int in planned:
+			if town.top(col) < 0:
+				all_there = false
+		ok(all_there, "each previewed cell has its block")
 		ok(main.history.size() == hist0 + 1, "the whole stroke is one undo step (%d new)" % (main.history.size() - hist0))
-		ok((main.cam_goal as Vector3).distance_to(goal_l) < 0.01, "a left drag does not move the camera")
-		ok(not main.stroke_active and main.stroke_seen.is_empty(), "the stroke ends when the button is released")
 		await _key(KEY_Z, true)
 		await _settle()
 		ok(town.size() == n2, "one Ctrl+Z takes the whole stroke back (%d -> %d blocks)" % [n2 + painted, town.size()])
 		await _key(KEY_Y, true)
 		await _settle()
-		ok(town.size() == n2 + painted, "Ctrl+Y paints it again")
-		# back and forth over the same cells in one stroke builds nothing new on top of it
+		ok(town.size() == n2 + painted, "Ctrl+Y builds it again")
 		await _key(KEY_Z, true)
 		await _settle()
-		var cols0 := town.columns()
-		await _drag(MOUSE_BUTTON_LEFT, _path([pa, pb, pa, pb]))
-		await _settle()
-		var tall := 0
-		var fresh := 0
-		for v2: int in town.columns():
-			if not cols0.has(v2):
-				fresh += 1
-				if town.top(v2) > 0:
-					tall += 1
-		ok(fresh >= 2 and tall == 0, "dragging back and forth over the cells the stroke built does not stack blocks on them (%d new columns, %d stacked)" % [fresh, tall])
-		await _key(KEY_Z, true)
-		await _settle()
-		ok(town.size() == n2, "and that stroke was one undo step too (%d blocks)" % town.size())
+		# Esc cancels: no build, no preview, and the rest of the drag does nothing
 		var h1: int = main.history.size()
-		var n_before := town.size()
+		await _button(MOUSE_BUTTON_LEFT, true, pa)
+		await _move_along(MOUSE_BUTTON_LEFT, _path([pa, pb]))
+		var was_previewing: bool = main.stroke_active and main.stroke_cols.size() >= 2
+		await _key(KEY_ESCAPE, false)
+		ok(was_previewing and not main.stroke_active and not (main.stroke_mi as MeshInstance3D).visible, "Esc during a drag cancels it and hides the preview")
+		await _move_along(MOUSE_BUTTON_LEFT, _path([pb, pa]))
+		await _button(MOUSE_BUTTON_LEFT, false, pa)
+		await _settle()
+		ok(town.size() == n2 and main.history.size() == h1 and not main.stroke_active, "a cancelled drag builds nothing, not even on release or when the pointer moves on")
+		# the right button cancels too
+		await _button(MOUSE_BUTTON_LEFT, true, pa)
+		await _move_along(MOUSE_BUTTON_LEFT, _path([pa, pb]))
+		await _button(MOUSE_BUTTON_RIGHT, true, pb)
+		ok(not main.stroke_active and not (main.stroke_mi as MeshInstance3D).visible, "pressing the right button during a drag cancels it")
+		await _button(MOUSE_BUTTON_RIGHT, false, pb)
+		await _button(MOUSE_BUTTON_LEFT, false, pb)
+		await _settle()
+		ok(town.size() == n2 and main.history.size() == h1, "and nothing is built (%d blocks)" % town.size())
+		# a left button moved only a couple of pixels is a click: one block
 		await _drag(MOUSE_BUTTON_LEFT, [pa, pa + Vector2(2.0, 1.0)])
 		await _settle()
-		ok(town.size() == n_before + 1 and main.history.size() == h1 + 1 and not main.stroke_active, "a left button moved only a couple of pixels is still a click: one block, no stroke")
+		ok(town.size() == n2 + 1 and main.history.size() == h1 + 1 and not main.stroke_active, "a left button moved only a couple of pixels is still a click: one block, no stroke")
 		await _key(KEY_Z, true)
 		await _settle()
+		ok(town.size() == n2, "and Ctrl+Z takes it back")
 	var goal_m: Vector3 = main.cam_goal
 	var nm := town.size()
 	await _drag(MOUSE_BUTTON_MIDDLE, _path([Vector2(vs.x * 0.5, vs.y * 0.5), Vector2(vs.x * 0.5 + 72.0, vs.y * 0.5)]))
@@ -446,25 +476,33 @@ func _run() -> void:
 		await _click(lscr2)
 		await _settle()
 		ok(town.top(lv) >= 0 and not town.has_wild(lv), "a castle block on a landscape column replaces what was there")
-	# painting the landscape: a stroke of Land puts land on every column it passes over, one undo step
+	# the landscape: a stroke of Land previews land on every column it passes over and builds them at the release, one undo step
 	main.load_starter("castle")
 	await _settle()
 	main.set_build_type(CSTown.T_LAND)
 	var lpair := _sea_pair(true)
-	ok(lpair.size() == 2, "found two spots on the sea to paint land between")
+	ok(lpair.size() == 2, "found two spots on the sea to drag land between")
 	if lpair.size() == 2:
 		var w0 := 0
 		for v3 in grid.verts.size():
 			if town.wild_is_ground(v3):
 				w0 += 1
 		var hl0: int = main.history.size()
-		await _drag(MOUSE_BUTTON_LEFT, _path([lpair[0], lpair[1]]))
+		await _button(MOUSE_BUTTON_LEFT, true, lpair[0])
+		await _move_along(MOUSE_BUTTON_LEFT, _path([lpair[0], lpair[1]]))
+		var lprev: int = main.stroke_cols.size()
+		var w_mid := 0
+		for v3 in grid.verts.size():
+			if town.wild_is_ground(v3):
+				w_mid += 1
+		ok(lprev >= 2 and w_mid == w0 and (main.stroke_mi as MeshInstance3D).visible, "a Land drag previews the columns and builds none while the button is down (%d previewed)" % lprev)
+		await _button(MOUSE_BUTTON_LEFT, false, lpair[1])
 		await _settle()
 		var w1 := 0
 		for v3 in grid.verts.size():
 			if town.wild_is_ground(v3):
 				w1 += 1
-		ok(w1 - w0 >= 2 and main.history.size() == hl0 + 1, "a Land stroke paints land on the columns it passes over, as one undo step (%d new columns, %d history steps)" % [w1 - w0, main.history.size() - hl0])
+		ok(w1 - w0 == lprev and main.history.size() == hl0 + 1, "the release puts the land on those columns as one undo step (%d new columns, %d history steps)" % [w1 - w0, main.history.size() - hl0])
 		await _key(KEY_Z, true)
 		await _settle()
 		var w2 := 0

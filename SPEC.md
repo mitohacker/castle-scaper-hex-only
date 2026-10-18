@@ -1,4 +1,4 @@
-# Castle Scaper Hex — design (Castle Scaper Realistic on an organic hex grid)
+# Castle Scaper Hex — design (Castle Scaper Realistic on a regular hex grid)
 
 **This is a copy of Castle Scaper (2026-10-17) with a realistic look**, asked for by Kevin: "make a copy of castle-scaper
 and use realistic rendering and post processing, realistic textures for castle. use image gen from tripo if needed but use
@@ -19,52 +19,59 @@ replaced by click-to-stack, its castle rules by block rules, its stone paint by 
 itself is untouched. Townscaper was studied with REA + Ghidra (`C:\Dev\Prototypes\townscaper-re`, local only); its
 ideas were re-implemented, no code or assets were copied.
 
-## 0. The organic hex grid (2026-10-18)
+## 0. The regular hex grid (2026-10-18)
 
-`CSGrid.generate(seed, radius, step)` (`scripts/cs_grid.gd`); the one knob is `--cs-jitter=` (`CSGrid.default_jitter`, 0.25;
-`tools/grid_probe.gd -- --jitter=0.25 --seed=N` sweeps it, `tools/hex_probe.gd` stress-builds castles on it). `grid.tris` holds three
-point ids per triangle (counter-clockwise), `grid.centers` each triangle's centroid, so every reader loops `for k in 3` over `tris[q * 3 + k]`.
+`CSGrid.generate(seed, radius, step)` (`scripts/cs_grid.gd`). No options: the grid is one fixed shape. `grid.tris` holds three point ids
+per triangle (counter-clockwise), `grid.centers` each triangle's centroid, so every reader loops `for k in 3` over `tris[q * 3 + k]`.
+(The seed is kept for saved towns and does nothing. History: Kevin first wanted an organic grid, then regular hexagons; the random edge
+flips, the relaxation and the jitter that made it organic are gone.)
 
-**Every cell is a hexagon.** (Kevin 2026-10-18: "make every cell a hexagon". An earlier version flipped 20 % of the lattice's edges at
-random, which left only 42 % hexagons and 29 % each of pentagons and heptagons; the flips and their options are gone.)
+**Every cell is a regular hexagon.**
 
-1. A triangle lattice cut to a hexagon (`step / 2` = 5 m, hexagon radius `2 * radius` lattice steps), so a cell is ~21.7 m2. Every inner
-   point has six neighbours, so its dual cell has six sides; the points on the board's edge are pinned and are sea only (1141 buildable
-   cells at seed 1, the ring next to the edge included, all hexagons).
-2. Relaxation like Townscaper's squares: every triangle pulled towards the best-fitting equilateral triangle of the mean area round its
-   centroid (its offsets rotated by 0 / -120 / -240 deg into one frame and summed), 255 steps, the border pinned. **The pulls are averaged
-   per point x0.8 (`HEX_PULL`)**, not summed x0.4: six triangles pull each point, and a gain of 2.4 oscillated. On a plain lattice this is
-   already the fixed point, so it only matters for the next step's neighbours.
-3. **Jitter** (`JITTER` = 0.25 lattice steps = 1.25 m): after relaxation every inner point is moved a seeded random step inside that disc.
-   This is what makes the grid organic: the topology stays six-sided everywhere but the hexagons come out irregular (side 2.5-3.3 m at
-   p10-p90, elongation median 1.12, max ~1.4; all cells convex, tested up to 0.35). A perfect lattice (`--cs-jitter=0`) is worse for
-   building: symmetric cells made many more open edges in random castles (30 of 105 towns with a defect against 4 at 0.25).
-4. The dual cell of a point is the centroids of its triangles (circumcentres were tried: cells blew up to hundreds of metres).
+1. A perfect triangle lattice cut to a hexagon (lattice step `step / 2` = 5 m, hexagon radius `2 * radius` steps). Every inner point has
+   six neighbours, so its dual cell, the polygon of the centroids of the six triangles round it, is a hexagon with six equal sides of
+   5 / sqrt(3) = 2.887 m, 120 degree corners and an area of 21.65 m2. 1141 buildable cells, the ring next to the board's edge included
+   (the points on the edge are pinned and sea only).
+2. **Pointy-top**: a flat side faces east and west, the corners point north and south (+z / -z). (Flat-top would be the same grid turned
+   30 degrees; pointy-top was kept because every probe and starter was tuned on it.)
+3. Every cell corner is shared by exactly three cells that all touch, so two blocks never meet at only a corner and `CSBuild.outline` is
+   just the centroids round the point.
 
-Blocks stand on grid **points**; a block's cell is the polygon of the triangle centroids round its point (the dual grid), so a cell has
-exactly 6 sides. Queries: `nearest`, `dual`, `face`, `wedge`, `neighbour_towards`, `index_of`, `buildable`, a spatial hash for picking.
+Blocks stand on grid **points**. Queries: `nearest`, `dual`, `face`, `wedge`, `neighbour_towards`, `index_of`, `buildable`, a spatial hash
+for picking.
 
-What follows from it downstream:
-- **No diagonal neighbours.** Each cell corner is shared by exactly three cells that are all neighbours of each other, so two blocks never
-  meet at only a corner and `CSBuild.outline` is just the centroids round the point.
-- **Short sides** (~2.9 m): a flight of stairs fits a side of 2.6 m with 0.75 m clear at each end (the 120 deg corners leave room). With
-  the jitter about one side in ten is shorter than 2.6 m and takes no flight.
-- **Pillars** are rare: a hex cell nearly always has a wall for an arch or corbels.
-- Towers are hexagonal prisms, walls and coasts zig-zag at ~120 deg.
-- Starter castle: ring 14.5-20.5 m (a 4.5 m band left a gap the sea flooded through), the keep is the centre and every other
-  neighbour, courtyard cottages only where nothing touches them (with six neighbours, random cottages joined the walls).
+What follows downstream:
+- **Short sides** (2.887 m): a flight of stairs fits a side of 2.6 m with 0.75 m clear at each end (the 120 deg corners leave room).
+- **Pillars** are rare: a hex cell nearly always has a wall for an arch or corbels. Towers are hexagonal prisms, walls and coasts
+  zig-zag at 120 deg.
+- Starter castle: ring 14.5-20.5 m, the keep is the centre and every other neighbour, courtyard cottages only where nothing touches them.
 - The grid overlay draws the cells' own outlines (a fan per cell); `--cs-showgrid` shows all of it, lifted over the swell, also in shots.
-- Castle doors' leaves end flush with the recess's back wall (they reached 2 cm behind it; a short hex side left that sliver open).
 - Not copied: the combinations viewer (its numbers were measured on another grid and do not hold for this one).
 
-Checked (Godot 4.7.1, `tools/hex_probe.gd`, 3 grid seeds x 16 random castles in one style and 16 in mixed styles, 70 clicks each, plus
-towers, two-storey walls and mixed rings on every cell along the board's edge): 4 of 105 towns with an audit defect (worst 14 open edges,
-1 non-manifold), the same order as the old flipped grid (5 of 105, worst 100 open); no defect on the edge rings.
+**What a regular grid broke, and the fixes** (found with `tools/hex_probe.gd`, minimised with `tools/defect_min.gd`). The old grids were
+irregular, so nothing ever lined up; on a perfect lattice points, edges and passages are exactly collinear or exactly touching, and the
+plan engine met cases a random grid hardly shows. With jitter 0 and no changes 30 of 105 random castles had a defect (the audit: open
+edges, non-manifold edges, flipped faces, T-junctions); now none of ~1250 do:
+- **Two features 2.3 cm apart.** A corbel's clip line and a parapet stub corner fell 2.3 cm apart on a cell side, just outside the plan's 2 cm
+  vertex merge (`CFPlan.SNAP`): two vertices where one was meant, an unbalanced ledge edge, and the whole underside of the block lost.
+  `SNAP` is now 3.5 cm (no feature the rules make is that small: their clearances are 6 cm and up).
+- **Chords through collinear points.** The ear clipper (`CFTri`) tests whether a loop point blocks an ear with cross products and a
+  tolerance of 2e-6, far below the float noise of a 20 m chord, so a chord along a straight run of cell corners (a row of land cells)
+  could miss a corner by a fraction of a mm and leave a crack. An ear is now also blocked by a loop point within 2 mm of its chord.
+- **Slivers.** A corner of a straight run clipped as an ear is a triangle with a tip within a mm of its chord; it was dropped as
+  "zero area" or oriented by float noise, which left the edges to its middle point open or flipped. A sliver (height under 3 mm) is now
+  kept and wound as the triangulator made it (`CFPlan._emit_ledge_tri`, `CFMesh.push_tri3(order)`).
+- **Neighbouring arches.** Two arches side by side with parallel passages each cut a half-width of up to 2 m in cells 2.5 m apart, so
+  their crown courses met exactly on the shared wall (four faces on one edge). `ARCH_MAX_W` is 1.1 m: a wall of at least 0.3 m is left
+  between any two passages.
+- **Stairs from a courtyard** (not a defect, a lost feature): the 1.5 m clearance from a door was measured to the door side's whole line,
+  and on a regular hexagon the doors of the two sides next to the flight's side are 0.73 m from the flight's edge, so no flight from
+  the ground ever fitted. Those two sides now need 0.7 m, every other door side 1.5 m as before.
 
 ## 1. The grid (`scripts/cs_grid.gd`, `CSGrid`)
 
-Section 0 is the grid: a relaxed, jittered triangle lattice in a hexagon, made in about 0.1 s, blocks on points and
-their dual cells, every cell a hexagon.
+Section 0 is the grid: a perfect triangle lattice in a hexagon, blocks on points and their dual cells, every cell a regular
+hexagon.
 
 ## 2. The blocks (`scripts/cs_town.gd`, `CSTown`)
 
@@ -128,7 +135,7 @@ two-level pattern of the dual cells round its grid point), deterministically, by
 ## 4. The engine (Castle Forge's `cf_plan.gd`, unchanged)
 
 Every part is a flat convex outline between two heights (a layer: ADD, CUT or CAP) in stacks and groups. The plan snaps
-to 1 mm, merges vertices within 2 cm, splits every edge at every crossing, classifies each piece of edge on both sides at
+to 1 mm, merges vertices within 3.5 cm, splits every edge at every crossing, classifies each piece of edge on both sides at
 every height and emits walls and ledges on shared vertices: **one welded skin**, audited by `CFAudit` (open edges,
 non-manifold edges, flipped faces, T-junctions). Roofs are built on the cap layers' own vertices (`cf_roofs.gd`).
 
@@ -271,7 +278,7 @@ Frame rates measured per infill ranged 64-146 fps on High with another program o
 | input | does |
 |---|---|
 | left click | put a block: on the sea, on top of a block, or beside one (the face under the mouse decides) |
-| left drag | paint: a block (or land, a tree, a road... whatever the build type is) on every new target the mouse passes over, one undo step per stroke |
+| left drag | preview, then build on release: a ghost of every block (or land, tree, road...) the stroke would place, built when the button is let go as one undo step; Esc or the right button cancels |
 | right click | take that block away |
 | right drag | turn the camera |
 | middle drag | move the camera |
@@ -289,13 +296,17 @@ castle starter the first time.
 Picking: a ray against the castle's collision mesh; the hit triangle's owner (CUSTOM1.w = grid point + 1) and normal
 say which block and which face. A top face adds above, a side face adds the neighbour that way, a miss adds on the sea.
 
-**Painting (left drag).** A left press that moves more than 6 px starts a stroke; from then on the mouse path (sampled every 6 px, so a fast drag
-leaves no gaps) is picked like a click, and each target that is not already built is built with the same `add_block` (or `add_wild` for the
-landscape types, quietly: no refusal messages along the way). A target built in this stroke is skipped, and so is a pick that lands on a block
-the stroke built (it would be stacked on). The first edit of the stroke saves the undo state and later ones do not (`stroke_active`,
-`stroke_recorded`), so one Ctrl+Z takes the whole stroke back. Right-drag stays the camera's turn, so there is no drag-to-remove; a button
-release, or the window losing focus, ends the stroke. In-game cues: the help line, a status message on the first stroke of a session and a
-"Painted N blocks" message at the end of each.
+**Drag (left button): preview, then build on release.** A left press that moves more than 6 px starts a stroke. While the button is down
+nothing is built: the mouse path (sampled every 6 px, so a fast drag leaves no gaps) is picked like a click, and the targets a click would
+build on form a **preview** drawn with the hover ghost's material (a translucent white prism per target, `stroke_mi`; the single hover
+ghost steps aside, and the status line says how many are previewed). The preview is a path: a new column is added to its end, and when the
+pointer comes back to a column already in it, everything after that column is dropped, so moving back over the cells takes them off
+(at most one target per column). The release builds the previewed targets in order with the same `add_block` / `add_wild` as a click
+(the landscape types refuse quietly where a click would complain), as ONE undo step (`stroke_committing`: the first edit saves the state,
+later ones do not). Esc, the right button, a change of build type or the window losing focus cancels the stroke: the preview goes,
+nothing is built and the rest of the drag does nothing. A press moved less than 6 px is a click and builds one block as before. Right drag
+stays the camera's turn, so there is no drag-to-remove; middle drag and W A S D move the camera. Cues: the help line, the status line
+while previewing, a message when the stroke is built or cancelled.
 
 Starters (`scripts/cs_starter.gd`): castle (a ring of walls, four towers, a gate passage, a keep with a round tower,
 cottages in the courtyard), village, one tower, harbour (quay, houses, striped lighthouse), bridges (two towers joined

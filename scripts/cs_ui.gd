@@ -152,7 +152,7 @@ func _ready() -> void:
 		sh.add_child(b)
 		swatches.append(b)
 	help = Label.new()
-	help.text = "Click: build  ·  Left-drag: paint  ·  Right-click: take away  ·  Tab / F1-F12: what a click builds  ·  W A S D / middle-drag: move  ·  Q E / right-drag: turn  ·  Wheel: zoom  ·  Ctrl+Z: undo"
+	help.text = "Click: build  ·  Left-drag: preview a row, release builds it (Esc / right button cancels)  ·  Right-click: take away  ·  Tab / F1-F12: what a click builds  ·  W A S D / middle-drag: move  ·  Q E / right-drag: turn  ·  Wheel: zoom  ·  Ctrl+Z: undo"
 	help.add_theme_font_size_override("font_size", 13)
 	help.add_theme_color_override("font_color", Color(1, 1, 1, 0.95))
 	help.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.45))

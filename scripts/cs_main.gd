@@ -7,7 +7,7 @@ const AUTOSAVE := "user://castle_scaper_hex_autosave.json"
 const CASTLES_DIR := "user://castles"
 const HISTORY_MAX := 300
 const DRAG_PX := 6.0
-const PAINT_STEP_PX := 6.0             # a painting stroke picks a target every this many pixels along the mouse path
+const PAINT_STEP_PX := 6.0             # a stroke picks a target every this many pixels along the mouse path
 
 var grid := CSGrid.new()
 var town := CSTown.new()
@@ -74,12 +74,14 @@ var spin := false
 var hover := {}
 var last_mouse := Vector2.ZERO
 var press := {}                     # button -> {"pos": Vector2, "moved": bool}
-var stroke_active := false          # a left-button drag is painting blocks (one undo step for the whole stroke)
-var stroke_recorded := false        # the stroke's undo step is on the history already
-var stroke_seen := {}               # columns built during this stroke (grid point ids; "wNNN" for landscape columns)
-var stroke_last := Vector2.ZERO     # where the stroke was last painted
-var stroke_count := 0
-var paint_cue_shown := false
+var stroke_active := false          # a left-button drag is previewing a row of blocks: nothing is built until the button is released
+var stroke_committing := false      # the release is building the previewed blocks: they are one undo step
+var stroke_recorded := false        # that undo step is on the history already
+var stroke_cols: Array = []         # the previewed columns, in the order the pointer reached them
+var stroke_targets := {}            # column -> [v, k] (a block) or [v] (a landscape column)
+var stroke_wild := false            # the stroke places landscape columns (the build type was land, road, trees, rocks or mountains)
+var stroke_last := Vector2.ZERO     # where the stroke was last sampled
+var stroke_mi: MeshInstance3D       # the preview: one translucent prism per previewed target, the look of the hover ghost
 var history := []
 var future := []
 var dirty := true
@@ -107,8 +109,6 @@ var shot_next := 0.0
 
 func _ready() -> void:
 	args = _parse_args()
-	if args.has("jitter"):
-		CSGrid.default_jitter = float(args.jitter)
 	if args.has("uncap"):
 		Engine.max_fps = 0
 		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
@@ -177,6 +177,12 @@ func _ready() -> void:
 	ghost_mi.visible = false
 	ghost_mi.layers = 2
 	add_child(ghost_mi)
+	stroke_mi = MeshInstance3D.new()
+	stroke_mi.material_override = ghost_mat
+	stroke_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	stroke_mi.visible = false
+	stroke_mi.layers = 2
+	add_child(stroke_mi)
 	_make_props()
 	life = CSLife.new()
 	life.name = "Life"
@@ -409,13 +415,13 @@ func mark_changed() -> void:
 
 
 func push_history() -> void:
-	if stroke_active and stroke_recorded:
+	if stroke_committing and stroke_recorded:
 		return                          # the stroke's first edit already saved the state before it
 	_record(town.to_dict())
 
 
 func _record(snap: Dictionary) -> void:
-	if stroke_active:
+	if stroke_committing:
 		stroke_recorded = true
 	history.append(snap)
 	if history.size() > HISTORY_MAX:
@@ -789,7 +795,7 @@ func _wild_near(pt: Vector2, v: int) -> int:
 
 
 func add_wild(v: int, quiet: bool = false) -> bool:
-	## quiet: no refusal messages (a painting stroke runs over cells that refuse all the time)
+	## quiet: no refusal messages (a stroke's release goes over cells that may refuse)
 	if v < 0 or not grid.buildable(v) or town.top(v) >= 0:
 		return false
 	var land := str(build.land.get(v, "")) if build != null else ""
@@ -801,7 +807,7 @@ func add_wild(v: int, quiet: bool = false) -> bool:
 		if not quiet:
 			flash("Only land, trees and roads grow in a courtyard")
 		return false
-	var snap := {} if (stroke_active and stroke_recorded) else town.to_dict()
+	var snap := {} if (stroke_committing and stroke_recorded) else town.to_dict()
 	if not town.wild_add(v, build_type):
 		if not quiet:
 			flash(_wild_refusal(v))
@@ -848,6 +854,7 @@ func set_build_type(t: int) -> void:
 	if build_type < CSTown.BUILDING_TYPES:
 		last_style = build_type
 	ghost_mi.set_meta("key", "")
+	_stroke_cancel(false)
 	if ui:
 		ui.refresh()
 	flash("Build: " + str(CSTown.TYPE_NAMES[build_type]))
@@ -872,6 +879,11 @@ func _inside_cell(v: int, pt: Vector2, margin: float) -> bool:
 
 
 func _update_ghost() -> void:
+	if stroke_active:
+		ghost_mi.visible = false         # the stroke's preview shows the cell under the pointer too
+		status_msg = "Drag preview: %d to build. Release to build them, Esc or the right button to cancel" % stroke_cols.size()
+		status_t = 0.3
+		return
 	if build_type >= CSTown.BUILDING_TYPES and not press.has(MOUSE_BUTTON_RIGHT):
 		_update_wild_ghost()
 		return
@@ -897,20 +909,25 @@ func _update_wild_ghost() -> void:
 	var key := "w%d:%d:%d" % [v, build_type, town.wild_heights(v).length() * 10 + town.wild_trees(v)]
 	if ghost_mi.get_meta("key", "") != key:
 		ghost_mi.set_meta("key", key)
-		var ground_y := 0.6 + (world.altitude(v) if world != null else 0.0)
-		var top := ground_y
-		match build_type:
-			CSTown.T_LAND, CSTown.T_ROAD:
-				top = ground_y + 0.25
-			CSTown.T_TREE:
-				top = ground_y + 0.5 + 1.6 * float(town.wild_trees(v) + 1)
-			CSTown.T_ROCK:
-				top = ground_y + CSWorld.RK_LEVEL
-			CSTown.T_MOUNTAIN:
-				top = ground_y + CSWorld.MT_LEVEL
-		ghost_mi.mesh = _prism(grid.dual(v), ground_y - 0.05, top, 0.2)
+		ghost_mi.mesh = _wild_prism(v)
 	ghost_mat.albedo_color = Color(1, 1, 1, 0.38)
 	ghost_mi.visible = true
+
+
+func _wild_prism(v: int) -> ArrayMesh:
+	## What a click of the landscape build type would put on column v, as the hover ghost shows it.
+	var ground_y := 0.6 + (world.altitude(v) if world != null else 0.0)
+	var top := ground_y
+	match build_type:
+		CSTown.T_LAND, CSTown.T_ROAD:
+			top = ground_y + 0.25
+		CSTown.T_TREE:
+			top = ground_y + 0.5 + 1.6 * float(town.wild_trees(v) + 1)
+		CSTown.T_ROCK:
+			top = ground_y + CSWorld.RK_LEVEL
+		CSTown.T_MOUNTAIN:
+			top = ground_y + CSWorld.MT_LEVEL
+	return _prism(grid.dual(v), ground_y - 0.05, top, 0.2)
 
 
 func _prism(poly: PackedVector2Array, y0: float, y1: float, shrink: float) -> ArrayMesh:
@@ -1105,8 +1122,8 @@ func _shot_step() -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
-		press.clear()                   # the button's release goes to another window: end the drag here
-		_stroke_end()
+		_stroke_cancel()                # the button's release goes to another window: no build
+		press.clear()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -1118,13 +1135,16 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif e.button_index == MOUSE_BUTTON_WHEEL_DOWN and e.pressed:
 			cam_dist = minf(cam_dist * 1.1, 600.0)
 		elif e.pressed:
+			if e.button_index == MOUSE_BUTTON_RIGHT:
+				_stroke_cancel()        # the right button during a drag cancels it (and starts turning the camera)
 			press[e.button_index] = {"pos": e.position, "moved": false}
 		else:
 			var info: Dictionary = press.get(e.button_index, {})
 			press.erase(e.button_index)
-			if e.button_index == MOUSE_BUTTON_LEFT:
-				_stroke_end()
-			if info.is_empty() or info.moved:
+			if e.button_index == MOUSE_BUTTON_LEFT and stroke_active:
+				_stroke_commit()
+				return
+			if info.is_empty() or info.moved or bool(info.get("cancelled", false)):
 				return
 			if e.button_index == MOUSE_BUTTON_LEFT:
 				var pk := pick(e.position)
@@ -1156,7 +1176,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			var k := cam_dist * 0.0016
 			cam_goal += (-right * m.relative.x + fwd * m.relative.y) * k
 			cam_target = cam_goal
-		if press.has(MOUSE_BUTTON_LEFT) and press[MOUSE_BUTTON_LEFT].moved and not press.has(MOUSE_BUTTON_RIGHT) and not press.has(MOUSE_BUTTON_MIDDLE):
+		if press.has(MOUSE_BUTTON_LEFT) and press[MOUSE_BUTTON_LEFT].moved and not press[MOUSE_BUTTON_LEFT].get("cancelled", false) \
+				and not press.has(MOUSE_BUTTON_RIGHT) and not press.has(MOUSE_BUTTON_MIDDLE):
 			if not stroke_active:
 				_stroke_begin(press[MOUSE_BUTTON_LEFT].pos)
 			_stroke_to(m.position)
@@ -1164,67 +1185,133 @@ func _unhandled_input(event: InputEvent) -> void:
 		_key(event as InputEventKey)
 
 
-# --- painting: a left-button drag puts a block on every new target the mouse passes over -------------
+# --- strokes: a left-button drag previews a row of blocks, the release builds them ------------------
 
 func _stroke_begin(pos: Vector2) -> void:
 	stroke_active = true
-	stroke_recorded = false
-	stroke_seen.clear()
-	stroke_count = 0
+	stroke_wild = build_type >= CSTown.BUILDING_TYPES
+	stroke_cols.clear()
+	stroke_targets.clear()
 	stroke_last = pos
-	_stroke_paint(pos)
-	if not paint_cue_shown:
-		paint_cue_shown = true
-		flash("Painting: keep the left button down and drag to build; Ctrl+Z undoes the whole stroke")
+	_stroke_sample(pos)
+	_stroke_show()
 
 
 func _stroke_to(pos: Vector2) -> void:
-	## Paint along the line from the last painted point to pos, a sample every few pixels, so a fast drag leaves no gaps.
+	## Sample the line from the last point to pos every few pixels, so a fast drag leaves no gaps, and show the result.
 	var d := stroke_last.distance_to(pos)
 	var n := maxi(int(ceilf(d / PAINT_STEP_PX)), 1)
 	for i in range(1, n + 1):
-		_stroke_paint(stroke_last.lerp(pos, float(i) / float(n)))
+		_stroke_sample(stroke_last.lerp(pos, float(i) / float(n)))
 	stroke_last = pos
+	_stroke_show()
 
 
-func _stroke_paint(pos: Vector2) -> void:
+func _stroke_sample(pos: Vector2) -> void:
+	## One pick of the path. A column the preview does not hold is added to its end (when a click there would build); a column it
+	## holds already is where the pointer came back to: everything after it is dropped, so moving back takes cells off the preview.
 	if ui.mouse_over_ui():
 		return
 	var pk := pick(pos)
-	if build_type < CSTown.BUILDING_TYPES:
+	var col := -1
+	var target := []
+	if not stroke_wild:
 		var a: Array = pk.get("add", [])
 		if a.is_empty():
 			return
-		var hit: Array = pk.get("remove", [])
-		# a column built in this stroke is done for the stroke: skip a target in it (the pointer came back, or the pick moved
-		# to the top face of the block just built) and a pick that lands on one of its blocks (it would be stacked on)
-		if stroke_seen.has(int(a[0])) or (not hit.is_empty() and stroke_seen.has(int(hit[0]))):
-			return
-		if add_block(a[0], a[1]):
-			stroke_seen[int(a[0])] = true
-			stroke_count += 1
+		col = int(a[0])
+		target = [col, int(a[1])]
 	else:
-		var w := int(pk.get("wadd", -1))
-		if w < 0 or stroke_seen.has("w%d" % w):
-			return
-		if add_wild(w, true):
-			stroke_seen["w%d" % w] = true
-			stroke_count += 1
+		col = int(pk.get("wadd", -1))
+		target = [col]
+	if col < 0:
+		return
+	if stroke_targets.has(col):
+		while stroke_cols.size() > 0 and int(stroke_cols[stroke_cols.size() - 1]) != col:
+			stroke_targets.erase(int(stroke_cols.pop_back()))
+		return
+	if not _stroke_can_build(target):
+		return
+	stroke_cols.append(col)
+	stroke_targets[col] = target
 
 
-func _stroke_end() -> void:
+func _stroke_can_build(target: Array) -> bool:
+	## What add_block / add_wild check before they change anything (a landscape type may still refuse at the release).
+	var v: int = target[0]
+	if v < 0 or not grid.buildable(v):
+		return false
+	if not stroke_wild:
+		var k: int = target[1]
+		return k >= 0 and k <= CSTown.MAX_LEVEL and not town.has(v, k)
+	if town.top(v) >= 0:
+		return false
+	var land := str(build.land.get(v, "")) if build != null else ""
+	if land == "base" or land == "passage":
+		return false
+	return not (land == "court" and build_type != CSTown.T_LAND and build_type != CSTown.T_TREE and build_type != CSTown.T_ROAD)
+
+
+func _stroke_show() -> void:
+	## The preview: the translucent prism of every previewed target, as the hover ghost draws one.
+	if stroke_cols.is_empty():
+		stroke_mi.visible = false
+		return
+	var m := ArrayMesh.new()
+	for col: int in stroke_cols:
+		var t: Array = stroke_targets[col]
+		var pm: ArrayMesh = _wild_prism(col) if stroke_wild else _prism(grid.dual(col), CSBuild.level_y_static(int(t[1])) + 0.02, CSBuild.level_y_static(int(t[1]) + 1) - 0.02, 0.15)
+		m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, pm.surface_get_arrays(0))
+	ghost_mat.albedo_color = Color(1, 1, 1, 0.38)
+	stroke_mi.mesh = m
+	stroke_mi.visible = true
+
+
+func _stroke_clear() -> void:
+	stroke_active = false
+	stroke_cols.clear()
+	stroke_targets.clear()
+	stroke_mi.visible = false
+
+
+func _stroke_cancel(announce: bool = true) -> void:
+	## Esc, the right button, a change of build type or the window losing focus: the preview goes, nothing is built, and the
+	## rest of the drag (until the button is released) does nothing.
+	if press.has(MOUSE_BUTTON_LEFT):
+		press[MOUSE_BUTTON_LEFT]["cancelled"] = true
 	if not stroke_active:
 		return
-	stroke_active = false
+	_stroke_clear()
+	if announce:
+		flash("Drag cancelled: nothing was built")
+
+
+func _stroke_commit() -> void:
+	## The release: build every previewed target, in the order the pointer reached them, as one undo step.
+	var cols := stroke_cols.duplicate()
+	var targets := stroke_targets.duplicate()
+	var wild := stroke_wild
+	_stroke_clear()
+	stroke_committing = true
 	stroke_recorded = false
-	if stroke_count > 1:
-		flash("Painted %d blocks: Ctrl+Z takes them all back" % stroke_count)
-	stroke_seen.clear()
+	var built := 0
+	for col: int in cols:
+		var t: Array = targets[col]
+		if (add_wild(col, true) if wild else add_block(int(t[0]), int(t[1]))):
+			built += 1
+	stroke_committing = false
+	stroke_recorded = false
+	if built > 0:
+		flash("Built %d: Ctrl+Z takes them all back" % built)
+	else:
+		flash("Nothing to build there")
 
 
 func _key(e: InputEventKey) -> void:
 	var ctrl := e.ctrl_pressed
 	match e.keycode:
+		KEY_ESCAPE:
+			_stroke_cancel()
 		KEY_Z:
 			if ctrl:
 				if e.shift_pressed:

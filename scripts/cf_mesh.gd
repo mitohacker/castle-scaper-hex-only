@@ -92,14 +92,21 @@ func push_tri(p: Array, n: Array, uv: Array, t: Vector3, w: float, c0: Array, fl
 
 
 func push_tri3(a: Vector3, b: Vector3, c: Vector3, na: Vector3, nb: Vector3, nc: Vector3, ua: Vector2, ub: Vector2, uc: Vector2,
-		t: Vector3, w: float, c0a: Vector4, c0b: Vector4, c0c: Vector4, fl: int, want: Vector3) -> void:
-	## The same without the arrays (the walls and ledges make tens of thousands).
+		t: Vector3, w: float, c0a: Vector4, c0b: Vector4, c0c: Vector4, fl: int, want: Vector3, order: int = 0) -> void:
+	## The same without the arrays (the walls and ledges make tens of thousands). order 1 / 2 (a flat triangle the caller keeps) fixes the
+	## winding: a, b, c / a, c, b; 0 decides it from the geometry and drops a triangle with no area.
 	var cr := (b - a).cross(c - a)
-	if cr.length_squared() < 1e-16:
+	if order == 0 and cr.length_squared() < 1e-16:
 		return   # only truly zero-area triangles are dropped (the triangulator's own limit is far above)
 	var col := Color(float(zone) / 255.0, pseed, float(fl) / 255.0, 1.0)
 	_vertex(a, na, ua, c0a, t, w, col)
-	if cr.dot(want) > 0.0:
+	if order == 1:
+		_vertex(b, nb, ub, c0b, t, w, col)
+		_vertex(c, nc, uc, c0c, t, w, col)
+	elif order == 2:
+		_vertex(c, nc, uc, c0c, t, w, col)
+		_vertex(b, nb, ub, c0b, t, w, col)
+	elif cr.dot(want) > 0.0:
 		_vertex(c, nc, uc, c0c, t, w, col)   # clockwise from the front
 		_vertex(b, nb, ub, c0b, t, w, col)
 	else:

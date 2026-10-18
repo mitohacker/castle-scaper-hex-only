@@ -25,7 +25,7 @@ extends RefCounted
 ## The previous plan is only read, never changed (the editor keeps showing it while the worker builds).
 
 const Q := 0.001            # lattice of the plan (m)
-const SNAP := 0.02          # vertices closer than this are one vertex (features smaller than this do not exist)
+const SNAP := 0.035         # vertices closer than this are one vertex (features smaller than this do not exist; 2 cm let the regular grid's 2.3 cm slivers through)
 const DELTA := 0.003        # how far from an edge the "which side is solid" probes sit
 const YE := 0.0006          # heights closer than this are one height
 const HC := 1.0             # cell of the layer hash (m): small, so a point query meets few layers
@@ -103,7 +103,8 @@ var se_cids: Array = []                      # per sub-edge: PackedInt64Array, t
 var ledges := {}                             # Vector2i(round(y/Q), +1 up / -1 down) -> Array of from, to pairs
 var lay_wall: Array = []                     # per layer: CFMesh with the wall pieces of the sub-edges it created, or null
 var stats := {}
-var debug := false
+static var debug_default := false           # tools/defect_min.gd turns it on: every plan then prints its unbalanced ledge vertices
+var debug := debug_default
 var open_loops := 0
 var reusable := false                        # may the next plan take things over from this one?
 var cid_index := {}                          # cid -> layer (-2: more than one layer has it)
@@ -1692,8 +1693,15 @@ func _emit_ledge_tri(mesh: CFMesh, y: float, up: bool, nrm: Vector3, a: Vector2,
 	var tan3 := Vector3.RIGHT
 	var bin := nrm.cross(tan3)
 	var area2 := (pb - pa).cross(pc - pa).length()
-	if area2 < 1e-9:
-		return
+	var order := 0
+	var longest := maxf(pa.distance_to(pb), maxf(pb.distance_to(pc), pc.distance_to(pa)))
+	if area2 < 0.003 * longest:
+		# a sliver (a corner of a straight run: its tip is within 3 mm of the chord, collinear in the design, a mm off on the plan's lattice):
+		# kept, and wound as the triangulator made it (counter-clockwise), not as float noise would orient it, because the walls round
+		# the region and the triangles beside it use the edges to its middle point
+		if pa.distance_squared_to(pb) < 1e-10 or pb.distance_squared_to(pc) < 1e-10 or pa.distance_squared_to(pc) < 1e-10:
+			return
+		order = 1 if up else 2
 	var ha := area2 / maxf((pc - pb).length(), 1e-6)
 	var hb := area2 / maxf((pc - pa).length(), 1e-6)
 	var hc := area2 / maxf((pb - pa).length(), 1e-6)
@@ -1705,7 +1713,7 @@ func _emit_ledge_tri(mesh: CFMesh, y: float, up: bool, nrm: Vector3, a: Vector2,
 	var c_b := Vector4(0.0 if r_bc else no, hb if r_ca else no, 0.0 if r_ab else no, no)
 	var c_c := Vector4(0.0 if r_bc else no, 0.0 if r_ca else no, hc if r_ab else no, no)
 	mesh.push_tri3(pa, pb, pc, nrm, nrm, nrm, Vector2(pa.dot(tan3), pa.dot(bin)), Vector2(pb.dot(tan3), pb.dot(bin)), Vector2(pc.dot(tan3), pc.dot(bin)),
-		tan3, 1.0, c_a, c_b, c_c, mesh.flags, nrm)
+		tan3, 1.0, c_a, c_b, c_c, mesh.flags, nrm, order)
 
 
 func _ledge_tag(p: Vector2, cands: PackedInt32Array, ym: float) -> int:

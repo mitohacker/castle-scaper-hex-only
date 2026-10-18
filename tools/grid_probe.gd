@@ -1,16 +1,15 @@
 extends SceneTree
 ## What the cells look like: how many sides, which way round, how long the sides are, how elongated (the building styles size roofs from this).
+## On the regular grid: every cell has 6 sides of 2.887 m, elongation 1.00.
 ## Run: Godot --headless --path . --script res://tools/grid_probe.gd
 
 func _initialize() -> void:
-	# --jitter=0.2, --circ=0.5, --seed=1
+	# (no options: the grid is regular)
 	var opt := {}
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--"):
 			opt[a.substr(2).get_slice("=", 0)] = a.get_slice("=", 1) if "=" in a else "1"
 	var g := CSGrid.new()
-	g.jitter = float(opt.get("jitter", CSGrid.default_jitter))
-	g.circ_blend = float(opt.get("circ", 0.0))
 	g.generate(int(opt.get("seed", 1)), 10, 10.0)
 	var b := CSBuild.new()
 	b.grid = g
