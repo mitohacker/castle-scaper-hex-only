@@ -76,7 +76,7 @@ var last_mouse := Vector2.ZERO
 var press := {}                     # button -> {"pos": Vector2, "moved": bool}
 var stroke_active := false          # a left-button drag is painting blocks (one undo step for the whole stroke)
 var stroke_recorded := false        # the stroke's undo step is on the history already
-var stroke_seen := {}               # targets built during this stroke (block keys, "wNNN" for wild columns)
+var stroke_seen := {}               # columns built during this stroke (grid point ids; "wNNN" for landscape columns)
 var stroke_last := Vector2.ZERO     # where the stroke was last painted
 var stroke_count := 0
 var paint_cue_shown := false
@@ -1196,12 +1196,12 @@ func _stroke_paint(pos: Vector2) -> void:
 		if a.is_empty():
 			return
 		var hit: Array = pk.get("remove", [])
-		var key := CSTown.key(a[0], a[1])
-		# a target built in this stroke, or the block just built in this stroke under the pointer (it would be stacked on), is skipped
-		if stroke_seen.has(key) or (not hit.is_empty() and stroke_seen.has(CSTown.key(hit[0], hit[1]))):
+		# a column built in this stroke is done for the stroke: skip a target in it (the pointer came back, or the pick moved
+		# to the top face of the block just built) and a pick that lands on one of its blocks (it would be stacked on)
+		if stroke_seen.has(int(a[0])) or (not hit.is_empty() and stroke_seen.has(int(hit[0]))):
 			return
 		if add_block(a[0], a[1]):
-			stroke_seen[key] = true
+			stroke_seen[int(a[0])] = true
 			stroke_count += 1
 	else:
 		var w := int(pk.get("wadd", -1))

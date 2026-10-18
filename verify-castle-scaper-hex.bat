@@ -39,7 +39,7 @@ if exist "%GUARD%" (
   "%GODOT%" --path "%cd%" --audio-driver Dummy --resolution 1280x720 --script res://tests/verify_cs_look.gd -- --cs-fresh --cs-starter=castle
 )
 if errorlevel 1 goto failed
-findstr /i /c:"SHADER ERROR" /c:"Parse Error" /c:"SCRIPT ERROR" "%cd%	mp\guard_run.log" "%cd%	mp\guard_run.log.err" >nul 2>nul
+findstr /i /c:"SHADER ERROR" /c:"Parse Error" /c:"SCRIPT ERROR" "%cd%\tmp\guard_run.log" "%cd%\tmp\guard_run.log.err" >nul 2>nul
 if not errorlevel 1 (
   echo A shader or script printed an error during the look run, see tmp\guard_run.log.err
   goto failed
