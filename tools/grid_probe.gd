@@ -3,7 +3,7 @@ extends SceneTree
 ## Run: Godot --headless --path . --script res://tools/grid_probe.gd
 
 func _initialize() -> void:
-	# --grid=quad|hex, --flip=0.55, --pure, --circ=0.5, --seed=1
+	# --flip=0.55, --pure, --circ=0.5, --seed=1
 	var opt := {}
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--"):
@@ -12,7 +12,7 @@ func _initialize() -> void:
 	g.flip_share = float(opt.get("flip", CSGrid.default_flip))
 	g.flip_pure = opt.has("pure") or CSGrid.default_pure
 	g.circ_blend = float(opt.get("circ", 0.0))
-	g.generate(int(opt.get("seed", 1)), 10, 10.0, str(opt.get("grid", "hex")))
+	g.generate(int(opt.get("seed", 1)), 10, 10.0)
 	var b := CSBuild.new()
 	b.grid = g
 	var by_n := {}
@@ -26,7 +26,7 @@ func _initialize() -> void:
 	for v in g.verts.size():
 		if not g.buildable(v):
 			continue
-		var ol := b.outline(v, func(_u: int) -> bool: return false)
+		var ol := b.outline(v)
 		var n := ol.size()
 		by_n[n] = int(by_n.get(n, 0)) + 1
 		var a2 := CSRoofs.area2(ol)

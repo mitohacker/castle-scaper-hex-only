@@ -52,17 +52,15 @@ func _grid() -> void:
 	var t0 := Time.get_ticks_msec()
 	grid.generate()
 	var ms := Time.get_ticks_msec() - t0
-	var fn := grid.fn
-	var nq := grid.quads.size() / fn
-	ok(grid.kind == "hex" and fn == 3, "the default grid is the organic hex grid (%s)" % grid.kind)
+	var nq := grid.tris.size() / 3
 	ok(nq > 800 and grid.verts.size() > 800, "the hexagon map has a real grid (%d faces, %d vertices)" % [nq, grid.verts.size()])
 	ok(ms < 3000, "made in %d ms" % ms)
 	var folded := 0
 	for q in nq:
-		for k in fn:
-			var a := grid.verts[grid.quads[q * fn + k]]
-			var b := grid.verts[grid.quads[q * fn + (k + 1) % fn]]
-			var c := grid.verts[grid.quads[q * fn + (k + fn - 1) % fn]]
+		for k in 3:
+			var a := grid.verts[grid.tris[q * 3 + k]]
+			var b := grid.verts[grid.tris[q * 3 + (k + 1) % 3]]
+			var c := grid.verts[grid.tris[q * 3 + (k + 2) % 3]]
 			if (b - a).cross(c - a) <= 0.0:
 				folded += 1
 				break
@@ -96,9 +94,6 @@ func _grid() -> void:
 		if grid.buildable(v) and not CSBuild.convex(grid.dual(v)):
 			concave += 1
 	ok(concave == 0, "every hex grid cell is convex (%d)" % concave)
-	var gq := CSGrid.new()
-	gq.generate(1, 10, 10.0, "quad")
-	ok(gq.fn == 4 and gq.quads.size() / 4 > 800, "the quad grid is still there (--cs-grid=quad)")
 	ok(bad_cell == 0, "every cell is a closed counter-clockwise polygon (%d bad)" % bad_cell)
 	ok(lost == 0, "the nearest grid point to a point is itself (%d)" % lost)
 	var g2 := CSGrid.new()
@@ -257,18 +252,18 @@ func _supports() -> void:
 
 
 func _ring_town(c: int, raise: bool) -> CSTown:
-	## Blocks round c's cell (its neighbours and the far corners of the quads round it) at level 0: a wall walk round a
+	## Blocks round c's cell (its neighbours and the far corners of the triangles round it) at level 0: a wall walk round a
 	## one-cell courtyard; with raise, two of them one level higher.
 	var t := CSTown.new()
 	var nb: PackedInt32Array = grid.nbrs[c]
 	var rg: PackedInt32Array = grid.rings[c]
 	for i in nb.size():
 		t.add(nb[i], 0, 1)
-		if raise and grid.fn == 3 and i <= 1:
+		if raise and i <= 1:
 			t.add(nb[i], 1, 1)    # a triangle has no far corner: two neighbours make the higher walk
 		var q := rg[i]
-		for kq in grid.fn:
-			var x := grid.quads[q * grid.fn + kq]
+		for kq in 3:
+			var x := grid.tris[q * 3 + kq]
 			if x != c and x != nb[i] and x != nb[(i + 1) % nb.size()] and grid.buildable(x):
 				t.add(x, 0, 2)
 				if raise and i == 0:
@@ -283,7 +278,7 @@ func _stairs() -> void:
 	var b: CSBuild = null
 	var near := []
 	for v in grid.verts.size():
-		if grid.buildable(v) and grid.verts[v].length() < 24.0 and (grid.nbrs[v] as PackedInt32Array).size() == (4 if grid.fn == 4 else 6):
+		if grid.buildable(v) and grid.verts[v].length() < 24.0 and (grid.nbrs[v] as PackedInt32Array).size() == 6:
 			near.append(v)
 	near.sort_custom(func(x: int, y: int) -> bool: return grid.verts[x].length() < grid.verts[y].length())
 	for ci in mini(near.size(), 40):
@@ -369,8 +364,8 @@ func _audits() -> void:
 		worst_nm, worst_ms, str(seen)])
 	ok(worst_open <= 20 and worst_nm <= 6, "random click-built castles stay (nearly) closed (open %d, non-manifold %d)" % [worst_open, worst_nm])
 	ok(worst_ms < 3000.0, "a 70-block castle builds in %.0f ms" % worst_ms)
-	ok(int(seen.get("arch", 0)) > 0 and int(seen.get("corbel", 0)) > 0 and (int(seen.get("pillar", 0)) > 0 or grid.fn == 3) and int(seen.get("stairs", 0)) > 0,
-		"click-built castles grow arches, corbels, pillars (quad grid only: a hex cell always has a wall for an arch or corbel) and stairs (%s)" % str(seen))
+	ok(int(seen.get("arch", 0)) > 0 and int(seen.get("corbel", 0)) > 0 and int(seen.get("stairs", 0)) > 0,
+		"click-built castles grow arches, corbels and stairs (%s)" % str(seen))
 
 
 func _styles() -> void:
@@ -497,8 +492,8 @@ func _in_solid(b: CSBuild, p: Vector3) -> bool:
 	var cells := {v0: true}
 	for qd in grid.rings[v0]:
 		if qd >= 0:
-			for kk in grid.fn:
-				cells[grid.quads[qd * grid.fn + kk]] = true
+			for kk in 3:
+				cells[grid.tris[qd * 3 + kk]] = true
 	var k := floori((p.y - CSBuild.B) / CSBuild.H)
 	for u: int in cells:
 		if not grid.buildable(u):
@@ -585,8 +580,8 @@ func _landscape() -> void:
 		for q in grid.rings[u4]:
 			if q < 0:
 				continue
-			for i in grid.fn:
-				var cc := grid.quads[q * grid.fn + i]
+			for i in 3:
+				var cc := grid.tris[q * 3 + i]
 				if kb.land.has(cc) and kw.corner.has(q) and absf(float(kw.corner[q])) > 0.001:
 					flush = false
 	ok(flush, "land is flat where it meets the castle")

@@ -74,7 +74,7 @@ static func _castle(grid: CSGrid, town: CSTown) -> void:
 	var cv := _centre(grid)
 	var c := grid.verts[cv]
 	# the hex grid's points are 5 m apart: a 4.5 m band can leave a gap the sea floods through
-	var ring := _band(grid, c, 15.0, 19.5) if grid.fn == 4 else _band(grid, c, 14.5, 20.5)
+	var ring := _band(grid, c, 14.5, 20.5)
 	for v: int in ring:
 		town.add(v, 0, 0)
 		town.add(v, 1, 1 if CSBuild.h01(v, 1) < 0.5 else 0)
@@ -110,7 +110,7 @@ static func _castle(grid: CSGrid, town: CSTown) -> void:
 	var keep := [cv]
 	var knb: PackedInt32Array = grid.nbrs[cv]
 	for i in knb.size():
-		if grid.fn == 4 or i % 2 == 0:   # hex: every other neighbour, or the keep fills the courtyard
+		if i % 2 == 0:                   # every other neighbour, or the keep fills the courtyard
 			keep.append(knb[i])
 	for v: int in keep:
 		for k in 3:
@@ -118,13 +118,13 @@ static func _castle(grid: CSGrid, town: CSTown) -> void:
 	for k in range(3, 6):
 		town.add(cv, k, 4)
 	# cottages in the courtyard
-	var court := _band(grid, c, 9.0, 12.0) if grid.fn == 4 else _band(grid, c, 8.5, 12.5)
+	var court := _band(grid, c, 8.5, 12.5)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 7
 	for v: int in court:
-		if grid.fn == 3 and Array(grid.nbrs[v]).any(func(u: int) -> bool: return town.has(u, 0)):
-			continue                     # hex: six neighbours make touching likely; a cottage stands alone
-		if rng.randf() < (0.28 if grid.fn == 4 else 0.6):
+		if Array(grid.nbrs[v]).any(func(u: int) -> bool: return town.has(u, 0)):
+			continue                     # six neighbours make touching likely; a cottage stands alone
+		if rng.randf() < 0.6:
 			town.add(v, 0, [2, 3, 5, 9, 7][rng.randi_range(0, 4)])
 
 

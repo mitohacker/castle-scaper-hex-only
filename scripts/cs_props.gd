@@ -290,7 +290,7 @@ func _block_pieces(v: int, k: int) -> Array:
 
 
 func _land_pieces(v: int) -> Array:
-	## The whole cell (the land's own outline is pinched inside it, so this errs on the safe side).
+	## The whole cell (the land's own outline lies inside it, so this errs on the safe side).
 	if not _land_p.has(v):
 		_land_p[v] = b.polys_of(v, grid.dual(v))
 	return _land_p[v]

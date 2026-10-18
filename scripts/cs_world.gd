@@ -4,8 +4,8 @@ extends RefCounted
 ## cell at a time like the castle's blocks, and each turning into something different depending on what is round it.
 ##
 ## Ground. Every column with land, a height (mountain m / rock r levels), trees, or standing on a castle courtyard is a cell of one
-## terrain mesh. A cell's centre has the height of its own levels; each of its corners (the centre of a quad of the grid, shared by four
-## columns) has one height for everybody, the mean of the four columns' heights, so the cells join without a crack. Between the centre
+## terrain mesh. A cell's centre has the height of its own levels; each of its corners (the centre of a triangle of the grid, shared by three
+## columns) has one height for everybody, the mean of the three columns' heights, so the cells join without a crack. Between the centre
 ## and a corner the cell's own profile decides the shape: a mountain falls away fast from its summit, a rock keeps a plateau and ends in a
 ## cliff, plain land is a gentle swell; ridged noise roughens the slopes. A corner touching castle land is flat at the castle's ground
 ## height (CSBuild.B), so land meets the castle flush. Coast edges get a bank (beach) or a cliff, depending on how high the corner is.
@@ -27,7 +27,7 @@ var garden := {}                # v -> true: wild columns on a castle courtyard 
 var deck := {}                  # v -> true: road-only columns over water (bridges and jetties)
 var extra := {}                 # v -> height of the column above G
 var sharp := {}                 # v -> share of rock in the column's height levels, 0..1
-var corner := {}                # quad id -> corner height above G
+var corner := {}                # triangle id -> corner height above G
 var cell_tris := {}             # v -> PackedVector3Array (flat triangle list) for height_at
 var mesh_arrays := {}           # the terrain surface, filled by build_terrain
 var faces := PackedVector3Array()   # triangles for the collision shape
@@ -95,22 +95,22 @@ func _heights() -> void:
 				rocks += 1
 		extra[v] = e
 		sharp[v] = float(rocks) / float(h.length()) if h.length() > 0 else 0.0
-	# a corner's height: the mean of the columns round the quad's centre, flat where the castle's land touches
+	# a corner's height: the mean of the columns round the triangle's centre, flat where the castle's land touches
 	for v: int in ground:
 		for q in grid.rings[v]:
 			if q < 0 or corner.has(q):
 				continue
 			var sum := 0.0
 			var flat := false
-			for i in grid.fn:
-				var u := grid.quads[q * grid.fn + i]
+			for i in 3:
+				var u := grid.tris[q * 3 + i]
 				if castle_land.has(u) or garden.has(u):
 					flat = true
 				sum += float(extra.get(u, 0.0))
-			var c := sum / float(grid.fn) * 1.3
+			var c := sum / 3.0 * 1.3
 			var mx := 0.0
-			for i in grid.fn:
-				mx = maxf(mx, float(extra.get(grid.quads[q * grid.fn + i], 0.0)))
+			for i in 3:
+				mx = maxf(mx, float(extra.get(grid.tris[q * 3 + i], 0.0)))
 			corner[q] = 0.0 if flat else minf(c, mx)
 
 

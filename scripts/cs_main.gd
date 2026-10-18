@@ -100,8 +100,6 @@ var shot_next := 0.0
 
 func _ready() -> void:
 	args = _parse_args()
-	if args.has("grid"):
-		CSGrid.default_kind = str(args.grid)
 	if args.has("flip"):
 		CSGrid.default_flip = float(args.flip)
 	if args.has("flip-pure"):
@@ -357,7 +355,7 @@ func toggle_props() -> void:
 
 
 func _make_grid_overlay() -> void:
-	## The grid on the water, shown round the cursor (Townscaper draws one quad per face with UV corners at +-1).
+	## The grid on the water, shown round the cursor (Townscaper draws one square per face with UV corners at +-1).
 	if grid_mi == null:
 		grid_mi = MeshInstance3D.new()
 		grid_mat = ShaderMaterial.new()

@@ -3,7 +3,7 @@
 **This is a copy of Castle Scaper (2026-10-17) with a realistic look**, asked for by Kevin: "make a copy of castle-scaper
 and use realistic rendering and post processing, realistic textures for castle. use image gen from tripo if needed but use
 procedural as much as possible for maximal flexibility. use a few mockups renders of full castle for final look and use it
-as reference". Nothing of the rules, the grid, the engine or the props' placement changed (sections 1-5 and 7 are
+as reference". Nothing of the rules, the engine or the props' placement changed except for the grid (section 0; sections 2-5 and 7 are
 Castle Scaper's); sections 6 (the look), 8 (tests, tools) and 9 changed, and 10 is new. Castle Scaper itself is untouched.
 The look was fitted to Tripo image-gen mock-ups of the game's own castle (`castle-scaper-realistic-art`, round 1: three lights,
 three cameras each, repaints of clean in-game frames) with `tools/side_by_side.py`. Every texture is procedural.
@@ -19,14 +19,13 @@ replaced by click-to-stack, its castle rules by block rules, its stone paint by 
 itself is untouched. Townscaper was studied with REA + Ghidra (`C:\Dev\Prototypes\townscaper-re`, local only); its
 ideas were re-implemented, no code or assets were copied.
 
-## 0. The organic hex grid (this copy, 2026-10-18)
+## 0. The organic hex grid (2026-10-18)
 
-`CSGrid.generate(seed, radius, step, kind)`, kind `"hex"` by default (`CSGrid.default_kind`, `--cs-grid=quad|hex`; the core test
-`tools/grid_probe.gd -- --flip=0.05 --pure --seed=N` sweeps the knobs). `grid.fn` is the corners per face (3 hex, 4 quad); `grid.quads`
-holds `fn` indices per face, so every reader loops `for k in grid.fn` over `quads[q * grid.fn + k]`.
+`CSGrid.generate(seed, radius, step)` (`scripts/cs_grid.gd`); the knobs are `--cs-flip=` and `--cs-flip-pure=` (`CSGrid.default_flip`,
+`CSGrid.default_pure`; `tools/grid_probe.gd -- --flip=0.05 --pure --seed=N` sweeps them). `grid.tris` holds three point ids per triangle
+(counter-clockwise), `grid.centers` each triangle's centroid, so every reader loops `for k in 3` over `tris[q * 3 + k]`.
 
-1. A triangle lattice cut to a hexagon, its step half the quad grid's (`step / 2` = 5 m, hexagon radius `2 * radius`), so a cell is
-   ~21.7 m2, the same as a quad cell (~20), and the map is as wide.
+1. A triangle lattice cut to a hexagon (`step / 2` = 5 m, hexagon radius `2 * radius` lattice steps), so a cell is ~21.7 m2.
 2. Random edge flips, `FLIP_TRIES` = 20 % of the edges tried in a seeded order (`--cs-flip=`). (a, b, c) + (b, a, d) -> (c, a, d) +
    (d, b, c): a and b lose a neighbour, c and d gain one. A flip is taken only when all four points are inner points with six neighbours
    (`flip_pure`, `--cs-flip-pure=0` turns it off), the new diagonal lies inside, and neither triangle was flipped already: each flip
@@ -41,35 +40,27 @@ holds `fn` indices per face, so every reader loops `for k in grid.fn` over `quad
 4. The dual cell of a point is the centroids of its triangles (circumcentres were tried: cells blew up to hundreds of metres). All 1141
    cells convex.
 
-What changes downstream:
-- **No diagonal neighbours.** Each cell corner is shared by exactly three cells that are all neighbours of each other, so
-  `CSBuild.outline` never pinches a corner (`PINCH` only on the quad grid). Random click-built castles: 0 of 16 with an open or
-  non-manifold edge (5 of 16 on the quad grid).
-- **Shorter sides** (~2.9 m against ~4.5 m): a flight of stairs fits a side of 2.6 m with 0.75 m clear at each end on the hex grid
-  (3.0 m and 1.0 m on quads; the 120 deg corners leave room). Random castles grow ~7x as many flights.
+Blocks stand on grid **points**; a block's cell is the polygon of the triangle centroids round its point (the dual grid), so a cell has 5,
+6 or 7 sides. Queries: `nearest`, `dual`, `face`, `wedge`, `neighbour_towards`, `index_of`, `buildable`, a spatial hash for picking. Border points
+are sea only.
+
+What follows from it downstream:
+- **No diagonal neighbours.** Each cell corner is shared by exactly three cells that are all neighbours of each other, so two blocks never
+  meet at only a corner and `CSBuild.outline` is just the centroids round the point. Random click-built castles: 0 of 16 with an open or
+  non-manifold edge.
+- **Short sides** (~2.9 m): a flight of stairs fits a side of 2.6 m with 0.75 m clear at each end (the 120 deg corners leave room).
 - **Pillars** almost never appear: a hex cell nearly always has a wall for an arch or corbels.
 - Towers are hexagonal prisms, walls and coasts zig-zag at 120 deg.
-- Starter castle on hex: ring 14.5-20.5 m (a 4.5 m band left a gap the sea flooded through), the keep is the centre and every other
+- Starter castle: ring 14.5-20.5 m (a 4.5 m band left a gap the sea flooded through), the keep is the centre and every other
   neighbour, courtyard cottages only where nothing touches them (with six neighbours, random cottages joined the walls).
 - The grid overlay draws the cells' own outlines (a fan per cell); `--cs-showgrid` shows all of it, lifted over the swell, also in shots.
-- Castle doors' leaves now end flush with the recess's back wall (they reached 2 cm behind it; a short hex side left that sliver open).
-- Not copied: the combinations viewer (its numbers are the quad grid's).
+- Castle doors' leaves end flush with the recess's back wall (they reached 2 cm behind it; a short hex side left that sliver open).
+- Not copied: the combinations viewer (its numbers were measured on another grid and do not hold for this one).
 
 ## 1. The grid (`scripts/cs_grid.gd`, `CSGrid`)
 
-Townscaper's recipe, on a hexagon:
-
-1. A triangle lattice inside a hexagon of radius 10 steps (step 10 m), in integer twelfths.
-2. Pairs of neighbouring triangles merge into quads, in a seeded random order (`generate(seed = 1)`); unmerged
-   triangles stay.
-3. Every face is subdivided once (a quad into four quads, a triangle into three), so everything is a quad.
-4. 255 relaxation steps x 0.4 pull each quad towards a square of the mean area (Townscaper's
-   `v = d0 + rot270(d1) - d2 + rot90(d3)`, normalised, scaled by the diagonal); the border stays pinned.
-
-Result: 1327 grid points, 1266 quads, made in about 0.1 s. Blocks stand on grid **points**; a block's cell is the
-polygon of the quad centres round its point (the dual grid), so cells have 3, 4, 5 or 6 sides (1207 buildable points:
-1000 with 4, 116 with 3, 78 with 5, 13 with 6). Border points are sea only. Queries: `nearest`, `dual`, `face`,
-`neighbour_towards`, `index_of`, a spatial hash for picking.
+Section 0 is the grid: a flipped, relaxed triangle lattice in a hexagon, 255 relaxation steps, made in about 0.1 s, blocks on points and
+their dual cells.
 
 ## 2. The blocks (`scripts/cs_town.gd`, `CSTown`)
 
@@ -83,9 +74,8 @@ A block becomes what its neighbours make it. Rebuilt from scratch (or incrementa
 - **Land and sea.** A flood fill from the border: an empty cell the sea cannot reach is a **courtyard**; a cell under a
   block that bridges over it is a **passage** (a gate); a ground block stands on **land**. Land is a low sandstone
   plinth 0.6 m above the sea; everything else is sea.
-- **Cell shape.** A cell corner shared only with a diagonal block (the two cells between them empty) is pulled 0.35 m
-  in (`PINCH`), so the two blocks stand apart instead of touching along a line (Townscaper's corner modules handle
-  that case). Same colour, same shape and same roundness stack into one body.
+- **Cell shape.** A cell is the grid point's dual cell (section 0), and its corners are never shared with a diagonal block. Same
+  colour, same shape and same roundness stack into one body.
 - **Tower.** A column of two or more blocks whose top touches no other top is a tower. Free-standing from the ground up
   it is round (16 sides); rising out of a wall it keeps its cell's shape. Its top gets a cone roof (72%, seeded by the
   grid point; red tile on warm colours, blue slate on cool ones; a pole, and a banner on the tall ones) or a ring of
@@ -94,7 +84,7 @@ A block becomes what its neighbours make it. Rebuilt from scratch (or incrementa
 - **Wall walk.** Tops that touch other tops at the same level form a walk: paved, with battlements (0.45 m thick,
   1.05 m high, notches every ~1.45 m away from corners) along every open edge. Where the parapet meets a taller block, a
   stub runs a parapet's width along that block and bites 0.15 m into it (`STUB_BITE`), so the solids overlap rather
-  than touch along one line, even where that block's corner is pinched.
+  than touch along one line.
 - **Openings.** A ground block facing land gets a planked door (85%); other open sides get arrow slits or windows, never
   on sides shorter than 2.6 m, never on a side an arch, a pier or a flight of stairs stands against.
 
@@ -108,15 +98,12 @@ two-level pattern of the dual cells round its grid point), deterministically, by
   through it (Castle Forge's gate arch): its span runs between the two abutments, the passage across that line, the
   crown 0.4 m under the block, four or five courses (fewer on narrow arches so no course is under 4 cm), every side line
   kept 6 cm clear of the cell's corners. Pairs whose arch opens on both sides win, then the most opposite. Decided from the
-  blocks alone; the fill then counts as a block (`filled()`) for everything else: its neighbours' outlines (no pinch
-  against it), walk edges, openings, round columns. A fill shut in on every side stays solid. The castle starter's
+  blocks alone; the fill then counts as a block (`filled()`) for everything else: its neighbours' outlines, walk edges, openings, round columns. A fill shut in on every side stays solid. The castle starter's
   gate passage is one; a bridge between two towers higher up is one too (its piers hang from the towers).
 - **Corbels.** Every other side whose neighbour has a block one level down (the block overhangs that wall) gets a
   stepped corbel: three courses reaching 1.0 / 0.65 / 0.3 m out of the wall (at most 45% of the cell's depth), over the
   top 1.1 m under the block, clipped from the block's own outline so its walls run on down. Its back is the wall's **own
-  face**: where that wall's corner is pinched (a diagonal block at its level) the face leans a few degrees off the cell's
-  side, and the corbel follows it (a corbel on the side would leave a sliver of air whose tip is a line two solids touch
-  along). An arch's feet over a wall one level down get corbels too, clipped to the piers (under the passage a course's
+  face**, which the corbel meets flush (a sliver of air would leave a tip that is a line two solids touch along). An arch's feet over a wall one level down get corbels too, clipped to the piers (under the passage a course's
   side would meet the underside of a block beside it along a line). Round columns bear nothing (they stand back from
   their sides).
 - **Pillar.** No neighbour with a wall below: a pillar down to the next block of its column or to the land (every
@@ -125,15 +112,14 @@ two-level pattern of the dual cells round its grid point), deterministically, by
 - **Stairs.** One flight between each pair of wall walks a level apart that touch, and between each courtyard and each
   walk at level 0 beside it: ten steps of 0.4 m climbing straight up to the higher block's side on the lower floor,
   1.2 m wide, running 2.2-4 m into the cell (inside its floor, 0.6 m clear of its parapets and taller walls, 1.5 m clear
-  of doors and arches), never on a door's side, never on a cell with anything above it, never where either side is
-  pinched (the faces would not meet flush), never within the lower walk's parapet stubs or the upper parapet's corners.
+  of doors and arches), never on a door's side, never on a cell with anything above it, never where the faces
+  would not meet flush, never within the lower walk's parapet stubs or the upper parapet's corners.
   The upper parapet has a gap the width of the flight + 12 cm a side where it arrives (no notches on that side), and
   the higher block gets no opening on that side. Of the sides where a flight fits, the one its two grid points pick
   (seeded); one flight per cell. Each step and each corbel course is a stack of its own: the plan splits an outline
   only at other stacks' corners, and their sides run along the same lines.
 - A walk edge under a block hanging over it from the level above (its bottom at the walk's floor) is closed, like an
-  edge against a taller block: the parapet ends against it in stubs. (It used to stand pressed against that block's face
-  and left a non-manifold line where that face was pinched.)
+  edge against a taller block: the parapet ends against it in stubs.
 
 ## 4. The engine (Castle Forge's `cf_plan.gd`, unchanged)
 
@@ -361,17 +347,13 @@ bridges 25, random:5:70 25). Screenshots: `shots/corner_bridges_overview.png`, `
 
 - A copy (`castle-scaper`), Castle Forge untouched; pastel plaster rather than stone (Kevin's choices).
 - Cells ~4 m, levels 4 m; towers round only when free-standing; 72 / 28 cone vs battlements, banners on tall towers;
-  cottage roofs only on single ground blocks; a blocked diagonal corner is pinched (a narrow gap) rather than given a
-  corner module.
+  cottage roofs only on single ground blocks.
 - Corner pieces (section 3a): an arch only between two abutments one level down (a block held from one side gets
   corbels, a long bridge gets corbels at its ends and pillars between); arches one level deep (a bridge high up has an
   arched underside hanging between its towers, not piers to the ground); corbels on every side over a wall; pillars to
   the ground however tall; stairs rising straight towards the higher wall (not along it: a cell side is too short for
   a 4 m climb along it), one flight per pair of walks, none from the ground to walks above level 0; the castle starter
   gained one block to make its gate a real bridge; a showcase starter (bridges) in the Castles menu.
-- Left over: a parapet corner meeting a block one level up only diagonally (the two cells beside that corner empty)
-  touches it along a vertical line (random 70-click castles 5 and 10, one edge each, older than the corner pieces):
-  the parapet would need the pinch of the level above at that corner.
 - Props: the costs and shares in the table above; chimneys also on small flat houses (the castle starter has no lone
   cottage); bunting only between blocks at the same level, its flags a little deeper than the wall colours (pale
   pastel flags vanished); shields and banners in heraldic colours, not the tower's own; hoardings in brown wood; the
@@ -462,7 +444,7 @@ the arc with room, so the camera never sits inside a wall or a mountain) -> `vie
 (`window.DATA`, so the page also opens straight from the disk). 33 MB of pictures: not in git yet (Kevin's call).
 
 **Gotchas.** A hidden preview pane throttles timers and IntersectionObserver: take two screenshots (the first forces a frame) before judging a section. `Object.assign`
-of a JSON field named like a lookup map shadowed the map. Untested: 3-, 5- and 6-sided cells (17% of the map), diagonal and two-storeys-up neighbours, colour seams.
+of a JSON field named like a lookup map shadowed the map. Untested: 5-, 6- and 7-sided cells, two-storeys-up neighbours, colour seams.
 A pen-drawing variant of the renders (`--cs-pen=light --tag=_pen`) would work with the same pipeline.
 
 ## 10. Open (realistic look)

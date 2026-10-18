@@ -4,8 +4,7 @@ Castle Scaper Realistic on an **organic hex grid**: a copy of `castle-scaper-rea
 and experiment with a hex grid for an organic grid instead of the cube grids we have now ... just do hex grid organic randomness and build
 castles and let me see how it looks"). Every cell is a hexagon, pentagon or heptagon (42 / 29 / 29 %; `--cs-flip=0.05` for the calmer first try, 68 % hexagons), warped by relaxation, so towers are
 hexagonal prisms and walls zig-zag; every cell corner is shared by three cells that all touch, so two blocks never meet at only a corner.
-`--cs-grid=quad` brings back Townscaper's quad grid for comparison. See SPEC section 0. Pictures: `shots/compare_quad_vs_hex.jpg`,
-`shots/hex_gallery.jpg`.
+See SPEC section 0. Picture: `shots/hex_gallery.jpg`.
 
 The rest is Castle Scaper Realistic's:
 
@@ -22,7 +21,7 @@ Besides castle blocks you can build **land, roads, trees, rocks and mountains**:
 Godot 4.7 (GDScript). A copy of Castle Scaper (which is unchanged).
 
 ```bat
-launch-castle-scaper-hex.bat      :: play (hex grid; add -- --cs-grid=quad for the old grid)
+launch-castle-scaper-hex.bat      :: play
 verify-castle-scaper-hex.bat      :: compile, core suite (headless), editor suite, look suite (windowed, memory guard)
 ```
 

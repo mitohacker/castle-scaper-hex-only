@@ -26,7 +26,6 @@ const MERLON_LOW := 0.45
 const NOTCH_W := 0.6
 const NOTCH_STEP := 1.45
 const ROUND_SIDES := 16
-const PINCH := 0.35             # a cell corner shared only with a diagonal block is pulled in this far (m)
 const STUB_BITE := 0.15         # how far a parapet stub reaches into the taller block it ends against
 const ARCH_PIER := 0.3          # the thinnest pier between an arch and the block it springs from (m)
 const ARCH_MIN_W := 0.7         # the narrowest half span worth an arch
@@ -166,25 +165,12 @@ static func convex(poly: PackedVector2Array) -> bool:
 	return true
 
 
-func outline(v: int, filled: Callable) -> PackedVector2Array:
-	## v's cell at one level: the quad centres round v, except that a centre shared only with a diagonal block (the quad's
-	## opposite corner filled, its two other corners empty) is pulled towards v, so the two blocks stand apart instead of
-	## touching along a single line (Townscaper's corner modules handle that case; here it becomes a narrow gap).
+func outline(v: int) -> PackedVector2Array:
+	## v's cell: the triangle centres round v. Every corner is shared by three mutual neighbours, so no block ever
+	## touches another at only a corner and nothing has to be pulled in.
 	var out := PackedVector2Array()
-	var nb: PackedInt32Array = grid.nbrs[v]
-	var rg: PackedInt32Array = grid.rings[v]
-	var n := nb.size()
-	for i in n:
-		var q := rg[i]
-		var c := grid.centers[q]
-		var opp := -1
-		if grid.fn == 4:                   # the hex grid's corners are shared by three mutual neighbours: never diagonal
-			for kk in 4:
-				if grid.quads[q * 4 + kk] == v:
-					opp = grid.quads[q * 4 + (kk + 2) % 4]
-		if opp >= 0 and filled.call(opp) and not filled.call(nb[i]) and not filled.call(nb[(i + 1) % n]):
-			c += (grid.verts[v] - c).normalized() * PINCH
-		out.append(c)
+	for q in grid.rings[v]:
+		out.append(grid.centers[q])
 	return out
 
 
@@ -231,7 +217,7 @@ func level_outline(v: int, k: int) -> PackedVector2Array:
 		for q in base:
 			out.append(c + (q - c) * f)
 		return out
-	return outline(v, func(u: int) -> bool: return filled(u, k))
+	return outline(v)
 
 
 static func clip_half(poly: PackedVector2Array, o: Vector2, nrm: Vector2, d: float) -> PackedVector2Array:
@@ -376,8 +362,7 @@ func _find_supports() -> void:
 
 func _arch_fit(v: int, k: int) -> Dictionary:
 	## The arch under block (v, k): two neighbours on opposite-ish sides with blocks at level k - 1 (its abutments) and
-	## room between them. Read from the blocks and the cell as the grid made it (the corners of an abutment side are
-	## never pinched: the abutment fills one of the two cells beside them), so it does not depend on other arches.
+	## room between them. Read from the blocks and the cell as the grid made it, so it does not depend on other arches.
 	## Pairs whose arch opens on both sides win, then the most opposite.
 	var kf := k - 1
 	var nb: PackedInt32Array = grid.nbrs[v]
@@ -523,9 +508,8 @@ func _supports() -> void:
 func _corbel(v: int, k: int, i: int) -> void:
 	## A stepped corbel under what fills (v, k) (a block, or an arch's fill) on its side i, where the wall of the
 	## neighbour one level down bears it: three courses, each reaching less far out of that wall, clipped from the
-	## outline of what it holds (its walls run on down). Its back is that wall's own face: where the wall's corner is
-	## pinched (a diagonal block at that level), the face leans a few degrees off the cell's side, and a corbel built on
-	## the side would leave a sliver of air whose tip is a line two solids touch along.
+	## outline of what it holds (its walls run on down). Its back is that wall's own face, which a corbel built on the
+	## cell's side must meet flush: a sliver of air would leave a tip that is a line two solids touch along.
 	var ol := level_outline(v, k)
 	var n := ol.size()
 	var a := ol[(i + n - 1) % n]
@@ -599,7 +583,7 @@ func _pillar(v: int, k: int) -> void:
 	var p := grid.verts[v]
 	var y_top := level_y(k)
 	var y_bot := B
-	var floor_ol := outline(v, func(u: int) -> bool: return land.has(u))
+	var floor_ol := outline(v)
 	for kb in range(k - 2, -1, -1):
 		if town.has(v, kb):
 			y_bot = level_y(kb + 1)
@@ -637,7 +621,7 @@ func _ground() -> void:
 	for v: int in land:
 		var st := plan.new_stack(CFPlan.OP_ADD, 10000 + v, {"zone": CFMesh.Z_RUBBLE, "top_zone": CFMesh.Z_FLAG, "seed": h01(v, 9),
 			"owner": v + 1, "prio": 2, "label": "land"})
-		for poly: PackedVector2Array in polys_of(v, outline(v, func(u: int) -> bool: return land.has(u))):
+		for poly: PackedVector2Array in polys_of(v, outline(v)):
 			plan.add_layer(st, poly, FOOT, B)
 
 
@@ -933,9 +917,8 @@ func _walk_battlements(area: Dictionary) -> void:
 				continue
 			# an edge against a taller block: where the open parapet meets it, a stub one parapet thick runs along it, so
 			# the battlement presses on the block's face (two solids meeting at a single line would not be manifold)
-			# The taller block's face is not always on this edge: a corner it shares only diagonally with another block is
-			# pinched in (outline()), so its face leans up to ~5 degrees away. The stub's wall side therefore slants from the
-			# loop corner into the block by STUB_BITE, and the two solids overlap instead of touching along one line.
+			# The stub's wall side slants from the loop corner into the block by STUB_BITE, so the two solids overlap
+			# instead of touching along one line.
 			var len := a.distance_to(b)
 			var dir := (b - a) / maxf(len, 1e-6)
 			var nrm := Vector2(-dir.y, dir.x) * PT
@@ -1092,8 +1075,8 @@ static func _ray_in(ol: PackedVector2Array, lim: PackedFloat32Array, q: Vector2,
 
 func _stair_fit(c: int, u: int, kl: int, low: Dictionary, up: Dictionary) -> Dictionary:
 	## A flight on cell c's floor (the top of its walk at level kl, or the courtyard when kl = -1) climbing straight up to
-	## the walk of u at level kl + 1, its top step against u's side. {} when it does not fit: a pinched side (the faces
-	## would not meet flush), a side under 3 m, a door, the lower walk's stubs or the upper parapet's corners in the way,
+	## the walk of u at level kl + 1, its top step against u's side. {} when it does not fit: a side whose faces
+	## would not meet flush, a side under 2.6 m, a door, the lower walk's stubs or the upper parapet's corners in the way,
 	## or less than 2.2 m of floor to run on.
 	var ku := kl + 1
 	var nbc: PackedInt32Array = grid.nbrs[c]
@@ -1105,7 +1088,7 @@ func _stair_fit(c: int, u: int, kl: int, low: Dictionary, up: Dictionary) -> Dic
 	var rgc: PackedInt32Array = grid.rings[c]
 	var raw0 := grid.centers[rgc[(ic + n - 1) % n]]
 	var raw1 := grid.centers[rgc[ic]]
-	var floor_ol := level_outline(c, kl) if kl >= 0 else outline(c, func(x: int) -> bool: return land.has(x))
+	var floor_ol := level_outline(c, kl) if kl >= 0 else outline(c)
 	if not convex(floor_ol) or floor_ol[(ic + n - 1) % n] != raw0 or floor_ol[ic] != raw1:
 		return {}
 	var m := (grid.nbrs[u] as PackedInt32Array).size()
@@ -1117,9 +1100,8 @@ func _stair_fit(c: int, u: int, kl: int, low: Dictionary, up: Dictionary) -> Dic
 	if kl < 0 and int(doors.get(u, -1)) == iu:
 		return {}                       # never in front of a door
 	var len := raw0.distance_to(raw1)
-	# hex cells have six shorter sides (~2.9 m) whose corners open at 120 deg: shorter sides and end margins do
-	var hexg := grid.fn == 3
-	if len < (2.6 if hexg else 3.0):
+	# hex cells have shorter sides (~2.9 m) whose corners open at 120 deg: a flight fits a side of 2.6 m
+	if len < 2.6:
 		return {}
 	var dir := (raw1 - raw0) / len
 	var nin := Vector2(-dir.y, dir.x)   # into c
@@ -1144,7 +1126,7 @@ func _stair_fit(c: int, u: int, kl: int, low: Dictionary, up: Dictionary) -> Dic
 	var si1 := (inu[(j + 1) % nu] - raw0).dot(dir)
 	var span_lo := maxf(minf(si0, si1), 0.0) + 0.25 + GAP_MARGIN
 	var span_hi := minf(maxf(si0, si1), len) - 0.25 - GAP_MARGIN
-	var endm := 0.75 if hexg else 1.0
+	var endm := 0.75
 	lo = maxf(lo, maxf(span_lo, endm + GAP_MARGIN))
 	hi = minf(hi, minf(span_hi, len - endm - GAP_MARGIN))
 	var hw := minf(STAIR_HW, (hi - lo) * 0.5)
