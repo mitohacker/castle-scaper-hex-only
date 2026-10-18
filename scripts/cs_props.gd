@@ -255,6 +255,9 @@ func _index() -> void:
 			var rec: Dictionary = _caps[kk]
 			e = float(rec.h) + (2.6 if bool(rec.banner) else 1.05)
 		_ext[kk] = e
+	for kk: int in b.hats:
+		var hh: Dictionary = b.hats[kk]
+		_ext[kk] = float(hh.top) - CSBuild.level_y_static(int(hh.k) + 1) + 0.06
 
 
 func _cells(c: Vector2, r: float) -> Array:
@@ -712,6 +715,7 @@ func _ornaments() -> void:
 			if not town.has(v, k) or b.is_round(v, k):
 				continue
 			var wall := town.colour(v, k)
+			var sty := town.style(v, k)
 			var y0 := CSBuild.level_y_static(k)
 			var y1 := CSBuild.level_y_static(k + 1)
 			for sd: Array in _sides(v, k):
@@ -722,13 +726,13 @@ func _ornaments() -> void:
 				var mid: Vector2 = sd[1]
 				var bas := wall_basis(sd[2])
 				var slot := v * 16 + i
-				if CSBuild.h01(slot, k, 91) < 0.7:
+				if sty == CSStyle.CASTLE and CSBuild.h01(slot, k, 91) < 0.7:
 					var w := len - 0.35
 					var o := Vector3(mid.x, y1 - 0.62, mid.y)
 					var sc := _cand(STRING, 6.0, CSBuild.h01(slot, k, 92), v, CSTown.key(v, k))
 					sc.boxes = [box(o, bas, Vector3(-w * 0.5, 0.0, 0.0), Vector3(w * 0.5, 0.12, 0.1))]
 					sc.inst = [[M_STRING, Transform3D(Basis(bas.x * w, bas.y, bas.z), o), wall, wall]]
-				if CSBuild.h01(slot, k, 93) < (0.34 if k <= 1 else 0.12):
+				if sty != CSStyle.APARTMENT and CSBuild.h01(slot, k, 93) < (0.34 if k <= 1 else 0.12):
 					var iw := minf(len - 0.7, 1.6 + 1.4 * CSBuild.h01(slot, k, 94))
 					if iw < 1.0:
 						continue
@@ -797,6 +801,10 @@ func _string(v: int, k: int, i: int, w: int, a2: Vector2, b2: Vector2, oa: Vecto
 	var d3 := Vector3(dir.x, 0.0, dir.y)
 	var ca := town.colour(v, k)
 	var cb := town.colour(w, k)
+	if town.style(v, k) != CSStyle.CASTLE or town.style(w, k) != CSStyle.CASTLE:
+		# the flags are festive whatever the houses: castle palette colours
+		ca = _pick([0, 4, 7, 2, 8, 5], CSBuild.h01(v, w, 74), -1)
+		cb = ca
 	if cb == ca:
 		cb = _pick([0, 4, 7, 2, 8, 5], CSBuild.h01(v, w, 72), ca)
 	var c := _cand(BUNTING, 2.5, CSBuild.h01(v * 16 + i, k, 73), v, CSTown.key(v, k))

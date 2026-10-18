@@ -293,6 +293,7 @@ func _apply_look() -> void:
 		main.mat_plaster.set_shader_parameter("wetness", float(g.wetness))
 		main.mat_plaster.set_shader_parameter("moss", float(g.moss))
 		main.mat_plaster.set_shader_parameter("grime", float(g.grime))
+		main.mat_plaster.set_shader_parameter("night", float(g.night))
 	if main.prop_mat:
 		main.prop_mat.set_shader_parameter("night", float(g.night))
 		main.leave_mat.set_shader_parameter("night", float(g.night))

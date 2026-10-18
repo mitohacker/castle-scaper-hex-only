@@ -54,7 +54,10 @@ var stairs: Array = []          # {cell, face, up, k (level of the lower walk, -
 var doors := {}                 # grid point -> the side (index in nbrs) its ground block has its door on
 var openings: Array = []        # every door, slit and window cut (the prop layer keeps clear of them, CSProps)
 var extras: Array = []          # {poly, y0, y1}: what corbels, pillars and stairs fill (the prop layer keeps clear too)
+var hats := {}                  # block key -> the hat of a styled top: {kind, style, parts, top, rec, ...} (CSStyleBuild)
 var stats := {}
+var facades := 0                # facades found on the painted walls (CSFacades)
+var _styled := false            # some block is not the castle's
 var _top := {}
 var _round := {}
 var _fill_col := {}             # grid points whose column holds an arch
@@ -105,11 +108,16 @@ func col_round(v: int) -> bool:
 		var r := top_of(v) >= 1 and not _fill_col.has(v)
 		if r:
 			for k in range(0, top_of(v) + 1):
-				if town.has(v, k) and not isolated(v, k):
+				if town.has(v, k) and (town.style(v, k) != CSStyle.CASTLE or not isolated(v, k)):
 					r = false
 					break
 		_round[v] = r
 	return _round[v]
+
+
+func castle_at(u: int, k: int) -> bool:
+	## A castle block, or the arch that fills a cell under a bridging block (not a house, a pagoda ...).
+	return (town.has(u, k) and town.style(u, k) == CSStyle.CASTLE) or fills.has(CSTown.key(u, k))
 
 
 func is_round(v: int, k: int) -> bool:
@@ -227,6 +235,8 @@ func build(g: CSGrid, t: CSTown, prev: CSBuild = null) -> void:
 	plan = CFPlan.new()
 	mesh = CFMesh.new()
 	caps.clear()
+	hats.clear()
+	_styled = false
 	land.clear()
 	kinds.clear()
 	fills.clear()
@@ -254,11 +264,12 @@ func build(g: CSGrid, t: CSTown, prev: CSBuild = null) -> void:
 	plan.run(mesh, prev.plan if prev != null else null)
 	var t2 := Time.get_ticks_usec()
 	_roofs()
+	_hats()
 	var pc := {}
 	for kk: int in pieces:
 		pc[pieces[kk]] = int(pc.get(pieces[kk], 0)) + 1
 	stats = {"blocks": town.size(), "tris": mesh.tri_count(), "layers": plan.layer_count(), "ms": float(Time.get_ticks_usec() - t0) / 1000.0,
-		"ms_rules": float(t1 - t0) / 1000.0, "ms_plan": float(t2 - t1) / 1000.0, "caps": caps.size(), "pieces": pc, "stairs": stairs.size()}
+		"ms_rules": float(t1 - t0) / 1000.0, "ms_plan": float(t2 - t1) / 1000.0, "caps": caps.size(), "pieces": pc, "stairs": stairs.size(), "hats": hats.size(), "facades": facades}
 
 
 func _find_land() -> void:
@@ -592,15 +603,18 @@ func _bodies() -> void:
 			if not town.has(v, k):
 				k += 1
 				continue
-			var c := town.colour(v, k)
+			var val := town.value(v, k)
+			var c := val & 15
+			var sty := val >> 4
+			_styled = _styled or sty != CSStyle.CASTLE
 			var rnd := is_round(v, k)
 			var shape := PackedVector2Array() if rnd else level_outline(v, k)
 			var k1 := k
-			while k1 + 1 <= tk and town.has(v, k1 + 1) and town.colour(v, k1 + 1) == c and is_round(v, k1 + 1) == rnd 					and (rnd or level_outline(v, k1 + 1) == shape):
+			while k1 + 1 <= tk and town.has(v, k1 + 1) and town.value(v, k1 + 1) == val and is_round(v, k1 + 1) == rnd 					and (rnd or level_outline(v, k1 + 1) == shape):
 				k1 += 1
 			var y0 := level_y(k)
-			var info := {"zone": CFMesh.Z_STONE, "top_zone": CFMesh.Z_FLAG, "seed": colour_seed(c), "owner": v + 1, "prio": 10,
-				"anchor": Vector3(p.x, y0, p.y), "label": "block"}
+			var info := {"zone": CSStyle.wall_zone(sty), "top_zone": CFMesh.Z_FLAG if sty == CSStyle.CASTLE else CSStyle.pave_zone(sty), "seed": colour_seed(c),
+				"owner": v + 1, "prio": 10, "anchor": Vector3(p.x, y0, p.y), "label": "block"}
 			if rnd:
 				info["round"] = true
 				info["center"] = p
@@ -615,6 +629,7 @@ func _bodies() -> void:
 
 func _tops() -> void:
 	var walks := {}                     # level -> [vertices]
+	var styled: Array = []              # tops of the building styles (their hats: CSStyleBuild)
 	for v: int in town.columns():
 		if not grid.buildable(v):
 			continue
@@ -622,6 +637,9 @@ func _tops() -> void:
 			if not town.has(v, k) or filled(v, k + 1):
 				continue
 			var kk := CSTown.key(v, k)
+			if town.style(v, k) != CSStyle.CASTLE:
+				styled.append(kk)
+				continue
 			# a neighbour higher, or a block of its own column floating above it (a pillar comes down onto it)
 			var crowded := top_of(v) > k
 			for u in grid.nbrs[v]:
@@ -681,6 +699,8 @@ func _tops() -> void:
 		_walk_battlements(a)
 	for s: Dictionary in stairs:
 		_stair(s)
+	if not styled.is_empty():
+		CSStyleBuild.tops(self, styled)
 
 
 func _add_cap(v: int, k: int, poly: PackedVector2Array, h: float, banner: bool) -> void:
@@ -759,11 +779,12 @@ func _walk_loops(area: Array, k: int) -> Array:
 		var n := nb.size()
 		for i in n:
 			var u := nb[i]
-			if filled(u, k) and not filled(u, k + 1):
+			if filled(u, k) and not filled(u, k + 1) and castle_at(u, k):
 				continue               # the same walk (or a block whose top is level with it): inside the area
 			# open: nothing beside it at this level nor where the parapet would stand (a block hanging over the edge
-			# from the level above closes it like a taller block: the parapet ends against it in stubs)
-			next[ol[(i + n - 1) % n]] = [ol[i], v, not filled(u, k) and not filled(u, k + 1)]
+			# from the level above closes it like a taller block: the parapet ends against it in stubs); a house or
+			# pagoda as high as the walk is something the parapet looks over, so that side is open too
+			next[ol[(i + n - 1) % n]] = [ol[i], v, not filled(u, k + 1)]
 	var loops: Array = []
 	var guard := 0
 	while not next.is_empty() and guard < 100000:
@@ -1134,6 +1155,7 @@ func _openings() -> void:
 				continue
 			var rnd := is_round(v, k)
 			var r := round_radius(v) if rnd else 0.0
+			var sty := town.style(v, k)
 			var cs := plan.new_stack(CFPlan.OP_CUT, 10000 + v, {"zone": CFMesh.Z_DARK, "owner": v + 1, "label": "opening"})
 			var y := level_y(k)
 			for i in nb.size():
@@ -1151,6 +1173,12 @@ func _openings() -> void:
 					var along := (f[1] - f[0]).normalized()
 					out = Vector2(along.y, -along.x)      # straight out of the side (the cell is on its left)
 				var roll := h01(v * 16 + i, k, 5)
+				if sty != CSStyle.CASTLE:
+					# a house, tower or pagoda: its windows are painted (CSFacades, the wall shader); only the front door is cut
+					if k == 0 and int(doors.get(v, -1)) == i:
+						_door(v, sp, out, y, sty)
+						_note("door", v, k, i, sp, out, y, y + 2.3, 0.55, rnd, sty)
+					continue
 				if k == 0:
 					if int(doors.get(v, -1)) == i:
 						_door(v, sp, out, y)
@@ -1169,10 +1197,10 @@ func _openings() -> void:
 						_note("window", v, k, i, sp, out, y + 1.4, y + 2.65, 0.34, rnd)
 
 
-func _note(kind: String, v: int, k: int, i: int, sp: Vector2, out: Vector2, y0: float, y1: float, hw: float, rnd: bool) -> void:
+func _note(kind: String, v: int, k: int, i: int, sp: Vector2, out: Vector2, y0: float, y1: float, hw: float, rnd: bool, sty: int = 0) -> void:
 	## An opening for the prop layer: on side i of block (v, k), centred on sp (on the wall, or on the circle round a
 	## round tower), facing out, y0..y1, half as wide as hw.
-	openings.append({"kind": kind, "v": v, "k": k, "i": i, "p": sp, "out": out, "y0": y0, "y1": y1, "hw": hw, "round": rnd})
+	openings.append({"kind": kind, "v": v, "k": k, "i": i, "p": sp, "out": out, "y0": y0, "y1": y1, "hw": hw, "round": rnd, "style": sty})
 
 
 func _recess(cut_stack: int, surface: Vector2, out: Vector2, y0: float, h: float, half_w: float, depth: float = 0.5) -> void:
@@ -1180,13 +1208,32 @@ func _recess(cut_stack: int, surface: Vector2, out: Vector2, y0: float, h: float
 	plan.add_layer(cut_stack, CFShapes.rect(centre, out, depth * 0.5 + 0.15, half_w), y0, y0 + h, CFMesh.Z_DARK)
 
 
-func _door(v: int, surface: Vector2, out: Vector2, y: float) -> void:
-	var cs := plan.new_stack(CFPlan.OP_CUT, 10000 + v, {"owner": v + 1, "label": "door"})
+func _door(v: int, surface: Vector2, out: Vector2, y: float, sty: int = 0) -> void:
+	var cs := plan.new_stack(CFPlan.OP_CUT, 10000 + v, {"owner": v + 1, "label": "door", "zone": CSStyle.wall_zone(sty)})
 	var depth := 0.55
 	plan.add_layer(cs, CFShapes.rect(surface - out * (depth * 0.5 - 0.15), out, depth * 0.5 + 0.15, 0.55), y, y + 2.3)
-	var leaf := plan.new_stack(CFPlan.OP_ADD, 70000 + v, {"zone": CFMesh.Z_DOOR, "top_zone": CFMesh.Z_DOOR, "owner": v + 1, "prio": 12,
-		"flags": CFMesh.F_PLAIN, "label": "door leaf"})
+	var lz := CFMesh.Z_DOOR if sty == CSStyle.CASTLE else CSStyle.trim_zone(sty)
+	var leaf := plan.new_stack(CFPlan.OP_ADD, 70000 + v, {"zone": lz, "top_zone": lz, "owner": v + 1, "prio": 12,
+		"flags": CFMesh.F_PLAIN, "label": "door leaf", "seed": colour_seed(town.colour(v, 0))})
 	plan.add_layer(leaf, CFShapes.rect(surface - out * (depth - 0.06), out, 0.08, 0.55), y, y + 2.2)
+
+
+func _hats() -> void:
+	## The hats of the styled tops, closed shells appended to the skin; then the facades of the painted walls get their bay layout.
+	for kk: int in hats:
+		var h: Dictionary = hats[kk]
+		for part: Dictionary in h.parts:
+			var rm := CFMesh.new()
+			(part.sh as CSRoofs.Shell).emit(rm, part.inside, h.seed, h.owner, h.anchor, "hat")
+			mesh.append_mesh(rm)
+	facades = 0
+	if _styled:
+		var fd: Array = []
+		for op: Dictionary in openings:
+			if str(op.kind) == "door" and int(op.get("style", 0)) != CSStyle.CASTLE:
+				var s: int = op.style
+				fd.append({"out": op.out, "p": op.p, "zone": CSStyle.wall_zone(s), "seed": colour_seed(town.colour(int(op.v), int(op.k))), "owner": int(op.v) + 1})
+		facades = CSFacades.annotate(mesh, fd)
 
 
 func _roofs() -> void:

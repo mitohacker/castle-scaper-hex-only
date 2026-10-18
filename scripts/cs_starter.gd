@@ -3,7 +3,7 @@ extends RefCounted
 ## Ready-made block layouts (the Castles menu, the tests and the screenshots). They are only blocks: every tower,
 ## roof, battlement, gate and courtyard in them comes out of CSBuild's rules, as when the player clicks them in.
 
-const NAMES := ["castle", "village", "tower", "harbour", "bridges", "landscape", "kingdom"]
+const NAMES := ["castle", "village", "tower", "harbour", "bridges", "landscape", "kingdom", "houses", "apartments", "chinese", "japanese", "fantasy", "hamlet", "styles"]
 
 
 static func make(name: String, grid: CSGrid, town: CSTown) -> void:
@@ -21,11 +21,25 @@ static func make(name: String, grid: CSGrid, town: CSTown) -> void:
 			_landscape(grid, town)
 		"kingdom":
 			_kingdom(grid, town)
+		"houses":
+			_district(grid, town, CSStyle.HOUSE, 11, _centre_pos(grid), 27.0, 0.52, 3, [0, 1, 2, 3, 4, 6, 7, 9])
+		"apartments":
+			_district(grid, town, CSStyle.APARTMENT, 12, _centre_pos(grid), 25.0, 0.58, 6, [0, 1, 2, 3, 4, 5, 6, 9])
+		"chinese":
+			_district(grid, town, CSStyle.CHINESE, 13, _centre_pos(grid), 27.0, 0.46, 3, [0, 1, 2, 3, 4, 5, 6, 7, 8])
+		"japanese":
+			_district(grid, town, CSStyle.JAPANESE, 14, _centre_pos(grid), 27.0, 0.42, 3, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+		"fantasy":
+			_district(grid, town, CSStyle.FANTASY, 15, _centre_pos(grid), 27.0, 0.46, 5, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+		"hamlet":
+			_district(grid, town, CSStyle.VILLAGE, 16, _centre_pos(grid), 29.0, 0.36, 2, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+		"styles":
+			_styles(grid, town)
 		_:
 			if name.begins_with("random"):
-				# random:SEED or random:SEED:CLICKS (the core suite's castles are random:0..15:70)
+				# random:SEED or random:SEED:CLICKS (the core suite's castles are random:0..15:70); a fourth number picks the style (-1: any)
 				var parts := name.split(":")
-				random_growth(grid, town, int(parts[1]) if parts.size() > 1 else 1, int(parts[2]) if parts.size() > 2 else 60)
+				random_growth(grid, town, int(parts[1]) if parts.size() > 1 else 1, int(parts[2]) if parts.size() > 2 else 60, int(parts[3]) if parts.size() > 3 else 0)
 			else:
 				_castle(grid, town)
 
@@ -214,8 +228,8 @@ static func _bridges(grid: CSGrid, town: CSTown) -> void:
 			town.add(cells[i], 1, 0)
 
 
-static func random_growth(grid: CSGrid, town: CSTown, seed: int, clicks: int) -> void:
-	## Random "clicks": on the sea near the middle, on top of a block, or beside one (the test castles).
+static func random_growth(grid: CSGrid, town: CSTown, seed: int, clicks: int, style: int = 0) -> void:
+	## Random "clicks": on the sea near the middle, on top of a block, or beside one (the test castles). style -1: a random style per click.
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 1000 + seed
 	var c := _centre_pos(grid)
@@ -225,17 +239,55 @@ static func random_growth(grid: CSGrid, town: CSTown, seed: int, clicks: int) ->
 		if cols.is_empty() or r < 0.15:
 			var v := grid.nearest(c + Vector2(rng.randf_range(-20, 20), rng.randf_range(-20, 20)))
 			if v >= 0:
-				town.add(v, 0, rng.randi_range(0, 11))
+				town.add(v, 0, rng.randi_range(0, 11), _pick_style(rng, style))
 			continue
 		var v0: int = cols[rng.randi_range(0, cols.size() - 1)]
 		if r < 0.5:
-			town.add(v0, town.top(v0) + 1, rng.randi_range(0, 11))
+			town.add(v0, town.top(v0) + 1, rng.randi_range(0, 11), _pick_style(rng, style))
 		else:
 			var nb: PackedInt32Array = grid.nbrs[v0]
 			var u := nb[rng.randi_range(0, nb.size() - 1)]
 			if grid.buildable(u):
 				var k := rng.randi_range(0, maxi(0, town.top(v0)))
-				town.add(u, k, rng.randi_range(0, 11))
+				town.add(u, k, rng.randi_range(0, 11), _pick_style(rng, style))
+
+
+static func _pick_style(rng: RandomNumberGenerator, style: int) -> int:
+	return rng.randi_range(0, CSStyle.COUNT - 1) if style < 0 else style
+
+
+static func _district(grid: CSGrid, town: CSTown, style: int, seed: int, c: Vector2, radius: float, dens: float, hmax: int, pool: Array) -> void:
+	## A cluster of one style round c: dense and tall in the middle, thinning out towards the rim.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed
+	for v: int in _band(grid, c, 0.0, radius):
+		var d := grid.verts[v].distance_to(c) / radius
+		if rng.randf() < dens * (1.25 - 0.7 * d):
+			var col: int = pool[rng.randi_range(0, pool.size() - 1)]
+			var h := 1
+			if rng.randf() < 0.62 - 0.45 * d:
+				h += rng.randi_range(1, maxi(1, hmax - 1))
+			for k in mini(h, hmax):
+				town.add(v, k, col if rng.randf() < 0.85 else pool[rng.randi_range(0, pool.size() - 1)], style)
+
+
+static func _styles(grid: CSGrid, town: CSTown) -> void:
+	## All seven styles side by side: a sector of the band round the middle for each.
+	var c := _centre_pos(grid)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 21
+	var heights := [3, 3, 6, 3, 3, 5, 2]
+	for v: int in _band(grid, c, 5.0, 30.0):
+		var p := grid.verts[v] - c
+		var sec := int(floor(fposmod(p.angle(), TAU) / TAU * float(CSStyle.COUNT)))
+		var d := p.length() / 30.0
+		if rng.randf() < 0.62 - 0.3 * d:
+			var col := rng.randi_range(0, 11)
+			var h := 1
+			if rng.randf() < 0.5 - 0.3 * d:
+				h += rng.randi_range(1, maxi(1, int(heights[sec]) - 1))
+			for k in mini(h, int(heights[sec])):
+				town.add(v, k, col, sec)
 
 
 static func _landscape(grid: CSGrid, town: CSTown) -> void:

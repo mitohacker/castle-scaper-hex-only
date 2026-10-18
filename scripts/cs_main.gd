@@ -36,7 +36,8 @@ var road_prop_mi: Array = []
 var road_body: StaticBody3D
 var road_shape: CollisionShape3D
 var roads: CSRoads
-var build_type := 0                 # CSTown.T_*: what a click puts down
+var build_type := 0                 # CSTown.T_*: what a click puts down (a building style 0-6, or a landscape type)
+var last_style := 0                 # the building style a click makes while a landscape type is picked (never used then)
 var sea_mi: MeshInstance3D
 var seabed_mi: MeshInstance3D
 var rocks_mi: MeshInstance3D
@@ -111,6 +112,7 @@ func _ready() -> void:
 	mat_plaster = ShaderMaterial.new()
 	mat_plaster.shader = load("res://shaders/cs_castle.gdshader")
 	mat_plaster.set_shader_parameter("land_y", CSBuild.B)
+	CSStyle.apply_palettes(mat_plaster)
 	_make_sea()
 	castle_mi = MeshInstance3D.new()
 	castle_mi.name = "Castle"
@@ -323,6 +325,8 @@ func _make_props() -> void:
 	leave_mat = ShaderMaterial.new()
 	leave_mat.shader = sh
 	leave_mat.set_shader_parameter("leave_t", 1.0)
+	CSStyle.apply_palettes(prop_mat)
+	CSStyle.apply_palettes(leave_mat)
 	prop_root = Node3D.new()
 	prop_root.name = "Props"
 	add_child(prop_root)
@@ -416,7 +420,7 @@ func add_block(v: int, k: int) -> bool:
 		return false
 	push_history()
 	town.wild_clear(v)
-	town.add(v, k, colour)
+	town.add(v, k, colour, build_type if build_type < CSTown.BUILDING_TYPES else last_style)
 	pop_id = float(v + 1)
 	pop_t0 = time_alive
 	pop_pending = async_build
@@ -813,6 +817,8 @@ func _puff_wild(v: int, gone: bool) -> void:
 
 func set_build_type(t: int) -> void:
 	build_type = posmod(t, CSTown.TYPE_NAMES.size())
+	if build_type < CSTown.BUILDING_TYPES:
+		last_style = build_type
 	ghost_mi.set_meta("key", "")
 	if ui:
 		ui.refresh()
@@ -838,7 +844,7 @@ func _inside_cell(v: int, pt: Vector2, margin: float) -> bool:
 
 
 func _update_ghost() -> void:
-	if build_type != CSTown.T_CASTLE and not press.has(MOUSE_BUTTON_RIGHT):
+	if build_type >= CSTown.BUILDING_TYPES and not press.has(MOUSE_BUTTON_RIGHT):
 		_update_wild_ghost()
 		return
 	var target: Array = hover.get("remove", []) if press.has(MOUSE_BUTTON_RIGHT) else hover.get("add", [])
@@ -1081,7 +1087,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				return
 			if e.button_index == MOUSE_BUTTON_LEFT:
 				var pk := pick(e.position)
-				if build_type == CSTown.T_CASTLE:
+				if build_type < CSTown.BUILDING_TYPES:
 					var a: Array = pk.get("add", [])
 					if not a.is_empty():
 						add_block(a[0], a[1])
@@ -1147,7 +1153,7 @@ func _key(e: InputEventKey) -> void:
 			toggle_props()
 		KEY_TAB:
 			set_build_type(build_type + (-1 if e.shift_pressed else 1))
-		KEY_F1, KEY_F2, KEY_F3, KEY_F4, KEY_F5, KEY_F6:
+		KEY_F1, KEY_F2, KEY_F3, KEY_F4, KEY_F5, KEY_F6, KEY_F7, KEY_F8, KEY_F9, KEY_F10, KEY_F11, KEY_F12:
 			set_build_type(e.keycode - KEY_F1)
 		KEY_L:
 			look.cycle_look()

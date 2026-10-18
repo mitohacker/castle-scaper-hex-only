@@ -122,6 +122,9 @@ func _ready() -> void:
 		var tb := Button.new()
 		tb.text = "%s" % CSTown.TYPE_NAMES[ti]
 		tb.tooltip_text = "Build %s (F%d, Tab)" % [str(CSTown.TYPE_NAMES[ti]).to_lower(), ti + 1]
+		if ti == CSTown.BUILDING_TYPES:
+			var sep := VSeparator.new()
+			th_box.add_child(sep)
 		tb.focus_mode = Control.FOCUS_NONE
 		tb.toggle_mode = false
 		var tix := ti
@@ -149,7 +152,7 @@ func _ready() -> void:
 		sh.add_child(b)
 		swatches.append(b)
 	help = Label.new()
-	help.text = "Click: build  ·  Right-click: take away  ·  Tab / F1-F6: castle, land, road, trees, rocks, mountains  ·  W A S D: move  ·  Q E: turn  ·  Right-drag: turn  ·  Wheel: zoom  ·  Ctrl+Z: undo"
+	help.text = "Click: build  ·  Right-click: take away  ·  Tab / F1-F12: castle, house, apartment, chinese, japanese, fantasy, village, land, road, trees, rocks, mountains  ·  W A S D: move  ·  Q E: turn  ·  Right-drag: turn  ·  Wheel: zoom  ·  Ctrl+Z: undo"
 	help.add_theme_font_size_override("font_size", 13)
 	help.add_theme_color_override("font_color", Color(1, 1, 1, 0.95))
 	help.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.45))
@@ -227,8 +230,14 @@ func refresh() -> void:
 		tbn.add_theme_color_override("font_color", Color(0.1, 0.35, 0.65) if ti == main.build_type else INK)
 		tbn.add_theme_color_override("font_hover_color", Color(0.1, 0.35, 0.65) if ti == main.build_type else INK)
 		tbn.add_theme_font_size_override("font_size", 18 if ti == main.build_type else 15)
+	var sty: int = main.build_type if main.build_type < CSTown.BUILDING_TYPES else main.last_style
 	for i in swatches.size():
 		var b: Button = swatches[i]
+		var col: Color = PALETTE[i] if sty == CSStyle.CASTLE else CSStyle.swatch(sty, i)
+		for st in ["normal", "hover", "pressed"]:
+			var sbx: StyleBoxFlat = b.get_theme_stylebox(st)
+			sbx.bg_color = col if st != "hover" else col.lightened(0.1)
+		b.tooltip_text = "%s (%s)" % [("Colour %d" % (i + 1)) if sty == CSStyle.CASTLE else str(CSStyle.palette(sty, i)[0]), ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "="][i]]
 		var s: StyleBoxFlat = b.get_theme_stylebox("normal")
 		s.border_color = Color(0.15, 0.2, 0.28) if i == main.colour else Color(1, 1, 1, 0.9)
 		s.set_border_width_all(4 if i == main.colour else 2)
@@ -238,7 +247,7 @@ func tick(_delta: float) -> void:
 	var vs := root.get_viewport_rect().size
 	swatch_bar.position = Vector2((vs.x - swatch_bar.size.x) * 0.5, vs.y - swatch_bar.size.y - 34)
 	type_bar.position = Vector2((vs.x - type_bar.size.x) * 0.5, swatch_bar.position.y - type_bar.size.y - 8)
-	swatch_bar.modulate = Color(1, 1, 1, 1.0 if main.build_type == CSTown.T_CASTLE else 0.45)
+	swatch_bar.modulate = Color(1, 1, 1, 1.0 if main.build_type < CSTown.BUILDING_TYPES else 0.45)
 	help.position = Vector2(16, vs.y - 26)
 	status.size = Vector2(vs.x, 24)
 	status.position = Vector2(0, 64)

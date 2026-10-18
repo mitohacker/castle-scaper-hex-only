@@ -40,6 +40,13 @@ func _init() -> void:
 			lands[b.land[v]] = int(lands.get(b.land[v], 0)) + 1
 		print("== %s: %s" % [n, str(b.stats)])
 		print("   tops %s land %s" % [str(kinds), str(lands)])
+		var hk := {}
+		for kk in b.hats:
+			var hh: Dictionary = b.hats[kk]
+			var key := "%s/%s" % [CSStyle.KEYS[int(hh.style)], str(hh.kind)]
+			hk[key] = int(hk.get(key, 0)) + 1
+		if not hk.is_empty():
+			print("   hats %s facades %d" % [str(hk), b.facades])
 		var oi: Array = au.get("open_info", [])
 		var ni: Array = au.get("nm_info", [])
 		au.erase("open_info")

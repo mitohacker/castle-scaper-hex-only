@@ -27,6 +27,7 @@ static func check(mesh: CFMesh, skip_zones: Array = []) -> Dictionary:
 	var undirected := {}
 	var edge_tri := {}
 	var directed := {}
+	var directed_tri := {}
 	var tri_keys := {}
 	var degenerate := 0
 	var bad_normal := 0
@@ -66,6 +67,7 @@ static func check(mesh: CFMesh, skip_zones: Array = []) -> Dictionary:
 				edge_tri[key] = t
 			var dk := u * big + v
 			directed[dk] = int(directed.get(dk, 0)) + 1
+			directed_tri[dk] = t
 		_union(parent, a, b)
 		_union(parent, b, c)
 	var open_ground := 0
@@ -89,9 +91,13 @@ static func check(mesh: CFMesh, skip_zones: Array = []) -> Dictionary:
 			var tt2: int = edge_tri[key]
 			nm_info.append("%s -> %s x%d zone %d %s" % [wpos[key / big], wpos[key % big], n, roundi(mesh.cols[tt2].r * 255.0), "owner %d" % int(mesh.cust1[tt2 * 4 + 3])])
 	var flipped := 0
+	var flip_info := []
 	for dk: int in directed:
 		if int(directed[dk]) > 1:
 			flipped += 1
+			if flip_info.size() < 6:
+				var ft: int = directed_tri[dk]
+				flip_info.append("%s -> %s x%d zone %d tri %s %s %s normal %s" % [wpos[dk / big], wpos[dk % big], int(directed[dk]), roundi(mesh.cols[ft].r * 255.0), verts[ft], verts[ft + 1], verts[ft + 2], mesh.norms[ft]])
 	# T-junctions: a welded vertex strictly inside an open edge
 	var grid := {}
 	for i in nv:
@@ -140,7 +146,7 @@ static func check(mesh: CFMesh, skip_zones: Array = []) -> Dictionary:
 	small.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
 	return {"tris": tris, "welded_verts": nv, "degenerate": degenerate, "bad_normal": bad_normal, "dup_tris": dup_tris,
 		"open_ground": open_ground, "open_other": open_other.size(), "non_manifold": non_manifold, "flipped": flipped,
-		"t_junctions": tj, "pieces": roots.size(), "examples": tj_examples, "open_info": open_info, "nm_info": nm_info, "components": small}
+		"t_junctions": tj, "pieces": roots.size(), "examples": tj_examples, "open_info": open_info, "nm_info": nm_info, "flip_info": flip_info, "components": small}
 
 
 static func _find(parent: PackedInt32Array, x: int) -> int:

@@ -8,10 +8,11 @@ const COLOURS := 12
 const MAX_HEIGHT := 6           # mountain / rock levels in one column
 const MAX_TREES := 3            # tree levels in one column: a tree, a grove, a forest
 ## The build types the player picks from (the castle is the only one that uses the 12 colours).
-enum { T_CASTLE, T_LAND, T_ROAD, T_TREE, T_ROCK, T_MOUNTAIN }
-const TYPE_NAMES := ["Castle", "Land", "Road", "Trees", "Rocks", "Mountains"]
+enum { T_CASTLE, T_HOUSE, T_APARTMENT, T_CHINESE, T_JAPANESE, T_FANTASY, T_VILLAGE, T_LAND, T_ROAD, T_TREE, T_ROCK, T_MOUNTAIN }
+const TYPE_NAMES := ["Castle", "House", "Apartment", "Chinese", "Japanese", "Fantasy", "Village", "Land", "Road", "Trees", "Rocks", "Mountains"]
+const BUILDING_TYPES := 7
 
-var blocks := {}            # v * 64 + k -> colour index
+var blocks := {}            # v * 64 + k -> style * 16 + colour index (the castle's blocks are just 0..11)
 ## The landscape: grid point -> {"l": 1 when it is plain land, "h": "mrm.." the height levels from the ground up (m mountain, r rock),
 ## "t": tree levels 0..3, "d": 1 when a road runs through it}. A column of the landscape and a castle block never share a grid point,
 ## except that a courtyard (castle land with no block) can take land, trees and a road.
@@ -30,14 +31,28 @@ func has(v: int, k: int) -> bool:
 
 
 func colour(v: int, k: int) -> int:
+	return int(blocks.get(v * 64 + k, 0)) & 15
+
+
+func style(v: int, k: int) -> int:
+	return int(blocks.get(v * 64 + k, 0)) >> 4
+
+
+func value(v: int, k: int) -> int:
 	return int(blocks.get(v * 64 + k, 0))
 
 
-func add(v: int, k: int, c: int) -> bool:
+func add(v: int, k: int, c: int, s: int = 0) -> bool:
 	if k < 0 or k > MAX_LEVEL or has(v, k):
 		return false
-	blocks[v * 64 + k] = clampi(c, 0, COLOURS - 1)
+	blocks[v * 64 + k] = clampi(c, 0, COLOURS - 1) + 16 * clampi(s, 0, CSStyle.COUNT - 1)
 	return true
+
+
+func column_style(v: int) -> int:
+	## The style of the topmost block of column v (-1: none).
+	var t := top(v)
+	return style(v, t) if t >= 0 else -1
 
 
 func remove(v: int, k: int) -> bool:

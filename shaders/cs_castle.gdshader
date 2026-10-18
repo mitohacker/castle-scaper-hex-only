@@ -7,6 +7,7 @@ shader_type spatial;
 render_mode cull_back, diffuse_burley, specular_schlick_ggx;
 
 #include "res://shaders/cs_common.gdshaderinc"
+#include "res://shaders/cs_styles.gdshaderinc"
 
 uniform float pop_id = -1.0;
 uniform float pop_t = 1.0;
@@ -18,6 +19,7 @@ uniform float grime = 0.8;        // 0..1 rain streaks, soot, dirt
 uniform float wear = 0.7;         // 0..1 chipped corners
 uniform float wetness = 0.0;      // 0 dry .. 1 rained on: darker, glossier stone
 uniform float time_of_wind = 0.0;
+uniform float night = 0.0;        // 0 day .. 1: windows lit
 
 varying vec4 v_c0;
 varying flat vec4 v_col;
@@ -105,6 +107,7 @@ void fragment() {
 	float metal = 0.0;
 	vec3 emis = vec3(0.0);
 	float ao = 1.0;
+	float spec = 0.35;
 	vec2 grad = vec2(0.0);
 	float n_big = fbm3(P * 0.19 + vec3(castle_seed * 1.3));
 	float n_mid = fbm3(P * 1.6 + vec3(castle_seed * 0.7, 3.0, 1.0));
@@ -112,7 +115,38 @@ void fragment() {
 	float sea = smoothstep(1.7, -0.35, P.y);          // 1 at the water line, 0 high above
 	float splash = smoothstep(2.6, 0.2, P.y);
 
-	if (zone == 0 || zone == 1 || zone == 2 || zone == 8) {
+	if (zone >= 20) {
+		// the building styles: the style is the zone's last digit, its kind (wall, roof, trim, paving, gable) the tens
+		int st = zone % 10;
+		int cls = zone / 10;
+		Surf sf;
+		sf.albedo = vec3(0.5);
+		sf.rough = 0.9;
+		sf.metal = 0.0;
+		sf.emis = vec3(0.0);
+		sf.ao = 1.0;
+		sf.grad = vec2(0.0);
+		sf.spec = 0.35;
+		if (cls == 2 || cls == 6) {
+			surf_wall(st, ci, flg, cls == 6, P, uv, UV2, up, fw, lod, d_edge, d_top, n_big, n_mid, v_owner, night, moss, grime, wetness, sf);
+			float ew = (1.0 - smoothstep(0.0, 0.035 + 0.07 * n_mid, d_edge)) * wear;
+			sf.albedo = mix(sf.albedo, sf.albedo * 1.12 + 0.01, ew * 0.4);
+			sf.ao *= mix(0.82, 1.0, smoothstep(0.0, 0.6, d_edge));
+		} else if (cls == 3) {
+			surf_roof(st, ci, P, uv, up, fw, lod, n_big, n_mid, v_owner, moss, wetness, sf);
+		} else if (cls == 4) {
+			surf_trim(st, ci, flg, P, uv, up, fw, lod, n_mid, v_owner, wetness, sf);
+		} else {
+			surf_pave(st, ci, P, fw, lod, n_mid, v_owner, moss, wetness, sf);
+		}
+		albedo = sf.albedo;
+		rough = sf.rough;
+		metal = sf.metal;
+		emis = sf.emis;
+		ao = sf.ao;
+		spec = sf.spec;
+		grad = sf.grad;
+	} else if (zone == 0 || zone == 1 || zone == 2 || zone == 8) {
 		vec3 base;
 		vec3 joint_col;
 		float dj = 1.0;
@@ -394,6 +428,6 @@ void fragment() {
 	EMISSION = emis;
 	AO = ao;
 	AO_LIGHT_AFFECT = 0.35;
-	SPECULAR = 0.35;
+	SPECULAR = spec;
 	NORMAL = normalize(NORMAL - TANGENT * grad.x - BINORMAL * grad.y);
 }
