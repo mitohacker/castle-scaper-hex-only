@@ -767,13 +767,30 @@ func _sub_edges() -> void:
 
 # --- 5. what is solid on each side, at every height --------------------------------------------------
 
+static func _pip(p: Vector2, poly: PackedVector2Array) -> bool:
+	## Is p inside the polygon? (Crossing number. Not Geometry2D.is_point_in_polygon: that triangulates the polygon first, and a polygon
+	## with split vertices along straight runs, which every outline has here, can come out of its triangulator with a gap, so a point
+	## in the middle of a layer was reported outside it and one side of an edge was classified as empty.)
+	var inside := false
+	var n := poly.size()
+	var b := poly[n - 1]
+	for i in n:
+		var a := poly[i]
+		if (a.y > p.y) != (b.y > p.y):
+			var x := a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x)
+			if p.x < x:
+				inside = not inside
+		b = a
+	return inside
+
+
 func _contain(p: Vector2) -> PackedInt32Array:
 	var out := PackedInt32Array()
 	var cand = lay_cells.get(Vector2i(floori(p.x / HC), floori(p.y / HC)))
 	if cand == null:
 		return out
 	for li: int in cand:
-		if (lay_rect[li] as Rect2).has_point(p) and Geometry2D.is_point_in_polygon(p, lay_poly[li]):
+		if (lay_rect[li] as Rect2).has_point(p) and _pip(p, lay_poly[li]):
 			out.append(li)
 	return out
 
@@ -845,7 +862,7 @@ func _side_key(mid: Vector2, src: Array) -> PackedInt32Array:
 					break
 			if own:
 				continue
-			if Geometry2D.is_point_in_polygon(mid, lay_poly[li]):
+			if _pip(mid, lay_poly[li]):
 				extras.append(li)
 	var key := PackedInt32Array()
 	var layers := PackedInt32Array()
@@ -1577,7 +1594,7 @@ func _emit_ledge_level(mesh: CFMesh, y: float, up: bool, arr: Array, pcache: Dic
 		for oi in outers.size():
 			var op: PackedVector2Array = outers[oi]
 			var aa := CFTri.area(op)
-			if aa < best_a and Geometry2D.is_point_in_polygon(probe, op):
+			if aa < best_a and _pip(probe, op):
 				best_a = aa
 				best_o = oi
 		if best_o < 0:
@@ -1589,7 +1606,7 @@ func _emit_ledge_level(mesh: CFMesh, y: float, up: bool, arr: Array, pcache: Dic
 			for oi in outers.size():
 				var op2: PackedVector2Array = outers[oi]
 				var aa2 := CFTri.area(op2)
-				if aa2 < best_a and Geometry2D.is_point_in_polygon(mid, op2):
+				if aa2 < best_a and _pip(mid, op2):
 					best_a = aa2
 					best_o = oi
 		if best_o >= 0:
@@ -1722,7 +1739,7 @@ func _ledge_tag(p: Vector2, cands: PackedInt32Array, ym: float) -> int:
 	for li in cands:
 		if p.x < lay_rx0[li] or p.y < lay_rz0[li] or p.x >= lay_rx1[li] or p.y >= lay_rz1[li]:
 			continue
-		if Geometry2D.is_point_in_polygon(p, lay_poly[li]):
+		if _pip(p, lay_poly[li]):
 			here.append(li)
 	return _surface(here, ym)
 

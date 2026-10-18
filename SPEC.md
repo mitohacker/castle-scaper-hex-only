@@ -51,7 +51,12 @@ What follows downstream:
 **What a regular grid broke, and the fixes** (found with `tools/hex_probe.gd`, minimised with `tools/defect_min.gd`). The old grids were
 irregular, so nothing ever lined up; on a perfect lattice points, edges and passages are exactly collinear or exactly touching, and the
 plan engine met cases a random grid hardly shows. With jitter 0 and no changes 30 of 105 random castles had a defect (the audit: open
-edges, non-manifold edges, flipped faces, T-junctions); now none of ~1250 do:
+edges, non-manifold edges, flipped faces, T-junctions); now none of 1612 do (800 towns of one style and 800 of mixed styles in four ranges of seeds, plus
+the board-edge rings, `tools/hex_probe.gd --towns=200 --from=0|1000|2000|3000`). Each fix below was needed: taking it out again brings defects back
+(measured: SNAP 120 of 403 towns, `ARCH_MAX_W` 15, the clipper's chord test and the sliver rule together 14 of 1209):
+- **Point in polygon.** `Geometry2D.is_point_in_polygon` triangulates its polygon first, and a layer's outline with split vertices along a
+  straight run can come out of that triangulation with a gap: a point in the middle of the layer was reported outside it, one side of a wall
+  was classified as empty and a block's underside vanished (1 town in ~250). `CFPlan._pip` is a plain crossing-number test.
 - **Two features 2.3 cm apart.** A corbel's clip line and a parapet stub corner fell 2.3 cm apart on a cell side, just outside the plan's 2 cm
   vertex merge (`CFPlan.SNAP`): two vertices where one was meant, an unbalanced ledge edge, and the whole underside of the block lost.
   `SNAP` is now 3.5 cm (no feature the rules make is that small: their clearances are 6 cm and up).
