@@ -5,7 +5,8 @@ extends RefCounted
 ## a group: the same column (owner), plane (direction within 0.6 degrees, offset within 2 cm), wall zone and colour. In each group the triangles'
 ## spans along the wall are merged into one facade (gaps up to GAP m are bridged: a door's recess); a facade is one side of one cell, wall and gable
 ## apart. Each vertex then gets UV2 = (its distance from the facade's left end as seen from outside, the facade's length); a facade with a door
-## has its length negated (the door stands in the middle of the side). The wall's own UV (CFPlan) stays: u = the world coordinate along the wall
+## has its length negated (the door stands in the middle of the side), and 100 m is added to the length for each end where the wall goes on as the same plane in the
+## next cell (+100 the left end, +200 the right end): a terrace of houses has no corner pilasters at its joints. The wall's own UV (CFPlan) stays: u = the world coordinate along the wall
 ## (the direction (nz, -nx) of its outward normal), v = the world height. Faces flagged F_NOWIN (parapets, penthouses) are left alone (UV2 = 0).
 
 const GAP := 1.7
@@ -70,6 +71,8 @@ static func annotate(mesh: CFMesh, doors: Array = []) -> int:
 			door_by_group[pk] = []
 		(door_by_group[pk] as Array).append((d.p as Vector2).dot(tg2))
 	var n_fac := 0
+	var facs := {}                      # group key -> [facades, fac_of]
+	var by_plane := {}                  # [angle, offset] -> [[s0, s1, owner]] of every facade there
 	for key: Vector4i in groups:
 		var g: Dictionary = groups[key]
 		var tris: Array = g.tris
@@ -87,6 +90,17 @@ static func annotate(mesh: CFMesh, doors: Array = []) -> int:
 			else:
 				(facades[facades.size() - 1] as Array)[1] = maxf(float((facades[facades.size() - 1] as Array)[1]), a1)
 			fac_of[oi] = facades.size() - 1
+		facs[key] = [facades, fac_of]
+		var pk := Vector2i(key.x, key.y)
+		if not by_plane.has(pk):
+			by_plane[pk] = []
+		for fa: Array in facades:
+			(by_plane[pk] as Array).append([float(fa[0]), float(fa[1]), key.w])
+	for key: Vector4i in groups:
+		var g: Dictionary = groups[key]
+		var tris: Array = g.tris
+		var facades: Array = (facs[key] as Array)[0]
+		var fac_of: Dictionary = (facs[key] as Array)[1]
 		n_fac += facades.size()
 		var has_door := []
 		for _f in facades.size():
@@ -96,11 +110,23 @@ static func annotate(mesh: CFMesh, doors: Array = []) -> int:
 				if ds >= float((facades[fi] as Array)[0]) - 0.2 and ds <= float((facades[fi] as Array)[1]) + 0.2:
 					has_door[fi] = true
 		var tg: Vector2 = g.tg
+		var cont := []                  # per facade: +100 a facade ends where this one begins, +200 one begins where this one ends
+		var pk2 := Vector2i(key.x, key.y)
+		for fa in facades.size():
+			var c := 0.0
+			for other: Array in by_plane.get(pk2, []):
+				if int(other[2]) == key.w:
+					continue
+				if absf(float(other[1]) - float((facades[fa] as Array)[0])) < 0.06:
+					c += 100.0
+				elif absf(float(other[0]) - float((facades[fa] as Array)[1])) < 0.06:
+					c += 200.0
+			cont.append(c)
 		for oi in tris.size():
 			var t: int = tris[oi]
 			var fi: int = fac_of[oi]
 			var f0: float = (facades[fi] as Array)[0]
-			var len := float((facades[fi] as Array)[1]) - f0
+			var len := float((facades[fi] as Array)[1]) - f0 + float(cont[fi])
 			for k in 3:
 				var p := verts[t + k]
 				var s := p.x * tg.x + p.z * tg.y

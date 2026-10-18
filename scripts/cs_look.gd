@@ -19,7 +19,7 @@ const PEN_IDS := ["off", "light", "full"]
 const PEN_NAMES := {"off": "Off", "light": "Light", "full": "Full"}
 const INFILL_IDS := ["pencil", "watercolour", "marker", "crayon", "stipple", "scribble", "gouache", "inkwash", "none"]
 const INFILL_NAMES := {"pencil": "Colour pencil", "watercolour": "Watercolour", "marker": "Marker", "crayon": "Crayon", "stipple": "Stipple", "scribble": "Scribble", "gouache": "Gouache", "inkwash": "Ink wash", "none": "No infill"}
-const SETTINGS := "user://castle_scaper_realistic.cfg"
+const SETTINGS := "user://castle_scaper_hex.cfg"
 
 ## One row per light. sun: elevation above the horizon and the compass turn (degrees), colour, energy. sky_*: CSSky uniforms.
 ## ambient: the sky's light on the shaded sides. fog_*: depth haze. grade: tone-map exposure, contrast, saturation, tint.

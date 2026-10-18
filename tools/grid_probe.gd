@@ -3,8 +3,16 @@ extends SceneTree
 ## Run: Godot --headless --path . --script res://tools/grid_probe.gd
 
 func _initialize() -> void:
+	# --grid=quad|hex, --flip=0.55, --pure, --circ=0.5, --seed=1
+	var opt := {}
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--"):
+			opt[a.substr(2).get_slice("=", 0)] = a.get_slice("=", 1) if "=" in a else "1"
 	var g := CSGrid.new()
-	g.generate(1, 10, 10.0)
+	g.flip_share = float(opt.get("flip", CSGrid.default_flip))
+	g.flip_pure = opt.has("pure") or CSGrid.default_pure
+	g.circ_blend = float(opt.get("circ", 0.0))
+	g.generate(int(opt.get("seed", 1)), 10, 10.0, str(opt.get("grid", "hex")))
 	var b := CSBuild.new()
 	b.grid = g
 	var by_n := {}
@@ -14,6 +22,7 @@ func _initialize() -> void:
 	var elong := []
 	var areas := []
 	var concave := 0
+	var worst := 0.0                     # the sharpest turn the wrong way (deg) over all cells
 	for v in g.verts.size():
 		if not g.buildable(v):
 			continue
@@ -28,6 +37,11 @@ func _initialize() -> void:
 		areas.append(absf(a2) * 0.5)
 		if not CSBuild.convex(ol):
 			concave += 1
+		for i in n:
+			var e0 := ol[(i + 1) % n] - ol[i]
+			var e1 := ol[(i + 2) % n] - ol[(i + 1) % n]
+			if e0.cross(e1) < 0.0:
+				worst = maxf(worst, rad_to_deg(absf(e0.angle_to(e1))))
 		for i in n:
 			lens.append(ol[i].distance_to(ol[(i + 1) % n]))
 		# elongation by the principal axis of the corners
@@ -49,7 +63,7 @@ func _initialize() -> void:
 	lens.sort()
 	elong.sort()
 	areas.sort()
-	print("cells %d  sides {%s}  ccw %d cw %d  concave %d" % [ccw + cw, str(by_n), ccw, cw, concave])
+	print("%s cells %d  sides {%s}  ccw %d cw %d  concave %d  worst reflex %.1f deg" % [str(opt), ccw + cw, str(by_n), ccw, cw, concave, worst])
 	print("side length min %.2f p10 %.2f median %.2f p90 %.2f max %.2f" % [lens[0], lens[lens.size() / 10], lens[lens.size() / 2], lens[lens.size() * 9 / 10], lens[lens.size() - 1]])
 	print("elongation min %.2f median %.2f p90 %.2f max %.2f" % [elong[0], elong[elong.size() / 2], elong[elong.size() * 9 / 10], elong[elong.size() - 1]])
 	print("area min %.1f median %.1f max %.1f" % [areas[0], areas[areas.size() / 2], areas[areas.size() - 1]])

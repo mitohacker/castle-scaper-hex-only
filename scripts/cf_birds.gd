@@ -148,7 +148,7 @@ static func landings_from(m: CFMesh) -> Dictionary:
 						hf[k] = ymax
 		var zone := int(cs[i].r * 255.0 + 0.5)
 		var n := (ns[i] + ns[i + 1] + ns[i + 2]).normalized()
-		if zone in [CFMesh.Z_SLATE, CFMesh.Z_TILE, CFMesh.Z_THATCH, CFMesh.Z_GOLD, CFMesh.Z_IRON]:
+		if zone in [CFMesh.Z_SLATE, CFMesh.Z_TILE, CFMesh.Z_THATCH, CFMesh.Z_GOLD, CFMesh.Z_IRON] or (zone > CSStyle.ROOF and zone <= CSStyle.ROOF + 6):
 			var own := int(cust[i * 4 + 3])
 			for v in [a, b, cc]:
 				if not roof_tip.has(own) or v.y > (roof_tip[own] as Vector3).y:

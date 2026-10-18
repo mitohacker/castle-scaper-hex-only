@@ -73,7 +73,8 @@ static func _nearest_angle(grid: CSGrid, cells: Array, c: Vector2, ang: float) -
 static func _castle(grid: CSGrid, town: CSTown) -> void:
 	var cv := _centre(grid)
 	var c := grid.verts[cv]
-	var ring := _band(grid, c, 15.0, 19.5)
+	# the hex grid's points are 5 m apart: a 4.5 m band can leave a gap the sea floods through
+	var ring := _band(grid, c, 15.0, 19.5) if grid.fn == 4 else _band(grid, c, 14.5, 20.5)
 	for v: int in ring:
 		town.add(v, 0, 0)
 		town.add(v, 1, 1 if CSBuild.h01(v, 1) < 0.5 else 0)
@@ -107,19 +108,23 @@ static func _castle(grid: CSGrid, town: CSTown) -> void:
 	town.add(gate, 2, 1)
 	# the keep: a block of cells three high with a round tower rising from its middle
 	var keep := [cv]
-	for u in grid.nbrs[cv]:
-		keep.append(u)
+	var knb: PackedInt32Array = grid.nbrs[cv]
+	for i in knb.size():
+		if grid.fn == 4 or i % 2 == 0:   # hex: every other neighbour, or the keep fills the courtyard
+			keep.append(knb[i])
 	for v: int in keep:
 		for k in 3:
 			town.add(v, k, 10 if v != cv else 1)
 	for k in range(3, 6):
 		town.add(cv, k, 4)
 	# cottages in the courtyard
-	var court := _band(grid, c, 9.0, 12.0)
+	var court := _band(grid, c, 9.0, 12.0) if grid.fn == 4 else _band(grid, c, 8.5, 12.5)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 7
 	for v: int in court:
-		if rng.randf() < 0.28:
+		if grid.fn == 3 and Array(grid.nbrs[v]).any(func(u: int) -> bool: return town.has(u, 0)):
+			continue                     # hex: six neighbours make touching likely; a cottage stands alone
+		if rng.randf() < (0.28 if grid.fn == 4 else 0.6):
 			town.add(v, 0, [2, 3, 5, 9, 7][rng.randi_range(0, 4)])
 
 

@@ -121,7 +121,7 @@ static func _tier(b: CSBuild, v: int, k: int) -> void:
 	var kk := CSTown.key(v, k)
 	b.kinds[kk] = "tier"
 	b.hats[kk] = {"kind": "tier", "style": x.s, "v": v, "k": k, "parts": parts, "seed": x.seed, "owner": x.owner, "anchor": x.anchor,
-		"top": float(rec.get("top", x.ys + 1.0)), "rec": rec, "poly": x.poly, "ys": x.ys}
+		"top": float(rec.get("top", x.ys + 1.0)), "rec": rec, "poly": x.poly, "ys": x.ys, "cls": x.cls, "gable": PackedByteArray()}
 
 
 static func _pick(list: Array, h: float) -> String:
@@ -305,7 +305,7 @@ static func _build(x: Ctx, kind: String) -> bool:
 	var kk := CSTown.key(x.v, x.k)
 	x.b.kinds[kk] = kind
 	x.b.hats[kk] = {"kind": kind, "style": x.s, "v": x.v, "k": x.k, "parts": parts, "seed": x.seed, "owner": x.owner, "anchor": x.anchor,
-		"top": float(rec.get("top", x.ys + 1.0)), "rec": rec, "poly": x.poly, "ys": x.ys}
+		"top": float(rec.get("top", x.ys + 1.0)), "rec": rec, "poly": x.poly, "ys": x.ys, "cls": x.cls, "gable": rec.get("gable", PackedByteArray())}
 	return true
 
 

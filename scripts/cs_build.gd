@@ -178,9 +178,10 @@ func outline(v: int, filled: Callable) -> PackedVector2Array:
 		var q := rg[i]
 		var c := grid.centers[q]
 		var opp := -1
-		for kk in 4:
-			if grid.quads[q * 4 + kk] == v:
-				opp = grid.quads[q * 4 + (kk + 2) % 4]
+		if grid.fn == 4:                   # the hex grid's corners are shared by three mutual neighbours: never diagonal
+			for kk in 4:
+				if grid.quads[q * 4 + kk] == v:
+					opp = grid.quads[q * 4 + (kk + 2) % 4]
 		if opp >= 0 and filled.call(opp) and not filled.call(nb[i]) and not filled.call(nb[(i + 1) % n]):
 			c += (grid.verts[v] - c).normalized() * PINCH
 		out.append(c)
@@ -459,10 +460,11 @@ func _arch(v: int, kf: int, a: Dictionary) -> void:
 	var k := kf + 1
 	var p := grid.verts[v]
 	var c := town.colour(v, k)
+	var sty := town.style(v, k)
 	var y0 := level_y(kf)
 	var y1 := level_y(k)
 	var ol := level_outline(v, kf)
-	var info := {"zone": CFMesh.Z_STONE, "top_zone": CFMesh.Z_FLAG, "seed": colour_seed(c), "owner": v + 1, "prio": 10,
+	var info := {"zone": CSStyle.wall_zone(sty), "top_zone": CFMesh.Z_FLAG if sty == CSStyle.CASTLE else CSStyle.pave_zone(sty), "seed": colour_seed(c), "owner": v + 1, "prio": 10,
 		"anchor": Vector3(p.x, y0, p.y), "label": "arch"}
 	var st := plan.new_stack(CFPlan.OP_ADD, 10000 + v, info)
 	if not convex(ol):
@@ -541,7 +543,10 @@ func _corbel(v: int, k: int, i: int) -> void:
 		depth = maxf(depth, (q - a).dot(nin))
 	var p := grid.verts[v]
 	var y := level_y(k)
-	var info := {"zone": CFMesh.Z_STONE, "top_zone": CFMesh.Z_FLAG, "seed": colour_seed(town.colour(v, k) if town.has(v, k) else town.colour(v, k + 1)),
+	var ks := k if town.has(v, k) else k + 1
+	var sty := town.style(v, ks)
+	var cz := CFMesh.Z_STONE if sty == CSStyle.CASTLE else CSStyle.trim_zone(sty)
+	var info := {"zone": cz, "top_zone": CFMesh.Z_FLAG if sty == CSStyle.CASTLE else cz, "seed": colour_seed(town.colour(v, ks)),
 		"owner": v + 1, "prio": 10, "anchor": Vector3(p.x, y - 1.1, p.y), "label": "corbel"}
 	var last := INF
 	for step: Array in CORBEL:
@@ -610,7 +615,9 @@ func _pillar(v: int, k: int) -> void:
 	var rb := minf(r + 0.15, lim)
 	var rnd := h01(v, k, 21) < 0.55
 	var rot := (grid.verts[grid.nbrs[v][0]] - p).angle()
-	var info := {"zone": CFMesh.Z_STONE, "top_zone": CFMesh.Z_FLAG, "seed": colour_seed(town.colour(v, k)), "owner": v + 1,
+	var sty := town.style(v, k)
+	var pz := CFMesh.Z_STONE if sty == CSStyle.CASTLE else CSStyle.trim_zone(sty)
+	var info := {"zone": pz, "top_zone": CFMesh.Z_FLAG if sty == CSStyle.CASTLE else pz, "seed": colour_seed(town.colour(v, k)), "owner": v + 1,
 		"prio": 10, "anchor": Vector3(p.x, y_bot, p.y), "label": "pillar"}
 	if rnd:
 		info["round"] = true
@@ -1110,7 +1117,9 @@ func _stair_fit(c: int, u: int, kl: int, low: Dictionary, up: Dictionary) -> Dic
 	if kl < 0 and int(doors.get(u, -1)) == iu:
 		return {}                       # never in front of a door
 	var len := raw0.distance_to(raw1)
-	if len < 3.0:
+	# hex cells have six shorter sides (~2.9 m) whose corners open at 120 deg: shorter sides and end margins do
+	var hexg := grid.fn == 3
+	if len < (2.6 if hexg else 3.0):
 		return {}
 	var dir := (raw1 - raw0) / len
 	var nin := Vector2(-dir.y, dir.x)   # into c
@@ -1135,8 +1144,9 @@ func _stair_fit(c: int, u: int, kl: int, low: Dictionary, up: Dictionary) -> Dic
 	var si1 := (inu[(j + 1) % nu] - raw0).dot(dir)
 	var span_lo := maxf(minf(si0, si1), 0.0) + 0.25 + GAP_MARGIN
 	var span_hi := minf(maxf(si0, si1), len) - 0.25 - GAP_MARGIN
-	lo = maxf(lo, maxf(span_lo, 1.0 + GAP_MARGIN))
-	hi = minf(hi, minf(span_hi, len - 1.0 - GAP_MARGIN))
+	var endm := 0.75 if hexg else 1.0
+	lo = maxf(lo, maxf(span_lo, endm + GAP_MARGIN))
+	hi = minf(hi, minf(span_hi, len - endm - GAP_MARGIN))
 	var hw := minf(STAIR_HW, (hi - lo) * 0.5)
 	if hw < 0.45:
 		return {}
@@ -1265,11 +1275,9 @@ func _door(v: int, surface: Vector2, out: Vector2, y: float, sty: int = 0) -> vo
 	var lz := CFMesh.Z_DOOR if sty == CSStyle.CASTLE else CSStyle.trim_zone(sty)
 	var leaf := plan.new_stack(CFPlan.OP_ADD, 70000 + v, {"zone": lz, "top_zone": lz, "owner": v + 1, "prio": 12,
 		"flags": CFMesh.F_PLAIN, "label": "door leaf", "seed": colour_seed(town.colour(v, 0))})
-	if sty == CSStyle.CASTLE:
-		plan.add_layer(leaf, CFShapes.rect(surface - out * (depth - 0.06), out, 0.08, 0.55), y, y + 2.2)
-	else:
-		# a door of the styles: its back face is the recess's own back wall (a leaf reaching 2 cm behind it puts two corners exactly one weld distance apart)
-		plan.add_layer(leaf, CFShapes.rect(surface - out * (depth - 0.07), out, 0.07, 0.55), y, y + 2.2)
+	# its back face is the recess's own back wall: a leaf reaching 2 cm behind it puts two corners exactly one weld distance apart (castle doors did,
+	# and on the hex grid's short sides that left a 2 cm sliver open)
+	plan.add_layer(leaf, CFShapes.rect(surface - out * (depth - 0.07), out, 0.07, 0.55), y, y + 2.2)
 
 
 func _hats() -> void:

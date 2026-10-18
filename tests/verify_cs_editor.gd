@@ -294,6 +294,8 @@ func _run() -> void:
 		var sc := _screen(Vector3(grid.verts[v].x, 0.6, grid.verts[v].y))
 		if not _safe(sc) or (main.cam as Camera3D).is_position_behind(Vector3(grid.verts[v].x, 0.6, grid.verts[v].y)):
 			continue
+		if int(main.pick(_screen(Vector3(grid.verts[v].x, 0.0, grid.verts[v].y))).wadd) != v:
+			continue                      # a block of the castle stands in front of it
 		var sco := sc.distance_to(Vector2(vs.x * 0.5, vs.y * 0.62))
 		if sco < lbest:
 			lbest = sco
@@ -336,6 +338,56 @@ func _run() -> void:
 		await _click(lscr2)
 		await _settle()
 		ok(town.top(lv) >= 0 and not town.has_wild(lv), "a castle block on a landscape column replaces what was there")
+	# the building styles: each type button puts down a block of its own style, with a hat of its own and painted walls
+	main.load_starter("castle")
+	await _settle()
+	var used := {}
+	for sty in range(1, CSStyle.COUNT):
+		await _click((ui2.type_btns[sty] as Button).get_global_rect().get_center())
+		ok(main.build_type == sty, "the %s button picks the %s style" % [CSStyle.NAMES[sty], CSStyle.NAMES[sty]])
+		var cand: Array = []
+		for v in grid.verts.size():
+			if not grid.buildable(v) or town.top(v) >= 0 or town.has_wild(v) or used.has(v):
+				continue
+			var d3 := grid.verts[v].length()
+			if d3 < 26.0 or d3 > 36.0:
+				continue
+			var crowded2 := false
+			for u in grid.nbrs[v]:
+				if town.top(u) >= 0 or used.has(u):
+					crowded2 = true
+			var sc2 := _screen(Vector3(grid.verts[v].x, 0.0, grid.verts[v].y))
+			if crowded2 or not _safe(sc2) or (main.cam as Camera3D).is_position_behind(Vector3(grid.verts[v].x, 0.0, grid.verts[v].y)):
+				continue
+			cand.append([sc2.distance_to(Vector2(vs.x * 0.5, vs.y * 0.62)), v])
+		cand.sort_custom(func(x: Array, y: Array) -> bool: return float(x[0]) < float(y[0]))
+		# the first spot whose click really lands on that cell of the sea (not on a block standing in front of it)
+		var sv := -1
+		for ci in cand.size():
+			var vv: int = cand[ci][1]
+			var pk2: Dictionary = main.pick(_screen(Vector3(grid.verts[vv].x, 0.0, grid.verts[vv].y)))
+			if (pk2.add as Array) == [vv, 0]:
+				sv = vv
+				break
+		ok(sv >= 0, "found a free spot for a %s block in view" % CSStyle.NAMES[sty])
+		if sv < 0:
+			continue
+		used[sv] = true
+		var sp2 := grid.verts[sv]
+		await _click(_screen(Vector3(sp2.x, 0.0, sp2.y)))
+		await _settle()
+		ok(town.has(sv, 0) and town.style(sv, 0) == sty, "a click with %s picked puts a %s block there (style %d)" % [CSStyle.NAMES[sty], CSStyle.NAMES[sty], town.style(sv, 0)])
+		var hk := CSTown.key(sv, 0)
+		ok(main.build.hats.has(hk) or main.build.kinds.get(hk, "") == "flat", "the %s block has its own roof (%s)" % [CSStyle.NAMES[sty], str(main.build.kinds.get(hk, "-"))])
+		ok(main.build.mesh.tri_count() > 0 and main.build.facades > 0, "the painted walls have their facades (%d)" % main.build.facades)
+		# it stacks: a click on its roof puts the next block of the same style on top
+		var top_y := CSBuild.level_y_static(1) + 0.4
+		var hover2: Dictionary = main.pick(_screen(Vector3(sp2.x, top_y, sp2.y)))
+		if (hover2.add as Array) == [sv, 1]:
+			await _click(_screen(Vector3(sp2.x, top_y, sp2.y)))
+			await _settle()
+			ok(town.has(sv, 1) and town.style(sv, 1) == sty, "a click on the roof stacks a second %s block" % CSStyle.NAMES[sty])
+	main.set_build_type(CSTown.T_CASTLE)
 	# W / A / S / D move the view across the map (Input state set by parsed key events, as a keyboard would)
 	main.cam_yaw = 0.0
 	main.cam_goal = Vector3.ZERO

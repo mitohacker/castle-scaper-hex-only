@@ -13,7 +13,7 @@ if not defined GODOT (
   exit /b 1
 )
 
-echo Launching Castle Scaper Realistic from %cd%
+echo Launching Castle Scaper Hex from %cd%
 echo   Click to put a block, right-click to take one away, pick a colour below.
 echo   Towers, roofs, battlements, gates and courtyards come out of what is around each block.
-start "Castle Scaper Realistic" "%GODOT%" --path "%cd%"
+start "Castle Scaper Hex" "%GODOT%" --path "%cd%"

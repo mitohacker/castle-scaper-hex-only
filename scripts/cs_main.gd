@@ -3,7 +3,7 @@ extends Node3D
 ## of a block, or beside one), right-click to take one away, pick its colour below. Towers, roofs, wall walks with
 ## battlements, gate passages, courtyards, doors and windows all come out of CSBuild's rules.
 
-const AUTOSAVE := "user://castle_scaper_realistic_autosave.json"
+const AUTOSAVE := "user://castle_scaper_hex_autosave.json"
 const CASTLES_DIR := "user://castles"
 const HISTORY_MAX := 300
 const DRAG_PX := 6.0
@@ -100,6 +100,12 @@ var shot_next := 0.0
 
 func _ready() -> void:
 	args = _parse_args()
+	if args.has("grid"):
+		CSGrid.default_kind = str(args.grid)
+	if args.has("flip"):
+		CSGrid.default_flip = float(args.flip)
+	if args.has("flip-pure"):
+		CSGrid.default_pure = str(args["flip-pure"]) != "0"
 	if args.has("uncap"):
 		Engine.max_fps = 0
 		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
@@ -368,12 +374,21 @@ func _make_grid_overlay() -> void:
 		add_child(grid_mi)
 	var verts := PackedVector3Array()
 	var uvs := PackedVector2Array()
-	var cuv := [Vector2(-1, -1), Vector2(1, -1), Vector2(1, 1), Vector2(-1, 1)]
-	for q in grid.quads.size() / 4:
-		for k: int in [0, 1, 2, 0, 2, 3]:
-			var p := grid.verts[grid.quads[q * 4 + k]]
-			verts.append(Vector3(p.x, 0.06, p.y))
-			uvs.append(cuv[k])
+	# the cells' own outlines (the dual grid: hexagons on the hex grid), each a fan from its grid point: UV.y 0 at the
+	# point and 1 on the rim, so the shader's line falls on the cell sides
+	for v in grid.verts.size():
+		if not grid.buildable(v):
+			continue
+		var cell := grid.dual(v)
+		var pv := grid.verts[v]
+		for i in cell.size():
+			var c0 := cell[i]
+			var c1 := cell[(i + 1) % cell.size()]
+			for pt: Vector2 in [pv, c1, c0]:
+				verts.append(Vector3(pt.x, 0.06, pt.y))
+			uvs.append(Vector2(0, 0))
+			uvs.append(Vector2(0, 1))
+			uvs.append(Vector2(0, 1))
 	var arr := []
 	arr.resize(Mesh.ARRAY_MAX)
 	arr[Mesh.ARRAY_VERTEX] = verts
@@ -1010,6 +1025,11 @@ func _process(delta: float) -> void:
 	mat_plaster.set_shader_parameter("hover_id", float(hv[0] + 1) if not hv.is_empty() else -1.0)
 	grid_mat.set_shader_parameter("center", hover.get("point", Vector3.ZERO))
 	grid_mi.visible = shot_path == "" and not spin
+	if args.has("showgrid"):            # the whole grid, also in shots (--cs-showgrid)
+		grid_mat.set_shader_parameter("center", Vector3.ZERO)
+		grid_mat.set_shader_parameter("radius", 160.0)
+		grid_mi.position.y = 0.5            # above the swell
+		grid_mi.visible = true
 	_update_ghost()
 	if birds:
 		birds.visible = birds_on

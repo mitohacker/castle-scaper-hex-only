@@ -271,8 +271,14 @@ void paint_opening(vec2 q, vec2 hs, int shape, float aa, vec3 frame_c, float fw,
 // ---------------------------------------------------------------------------------------------------------------------------------------
 // walls
 
-void surf_wall(int st, int ci, int flg, bool gable, vec3 P, vec2 uv, vec2 uv2, float up, float fw, float lod, float d_edge, float d_top, float n_big, float n_mid,
+void surf_wall(int st, int ci, int flg, bool gable, vec3 P, vec2 uv, vec2 uv2_in, float up, float fw, float lod, float d_edge, float d_top, float n_big, float n_mid,
 		float owner, float night, float moss_k, float grime_k, float wet_k, inout Surf s) {
+	// UV2 = (metres from the facade's left end, +- length + 100 m for each end where the wall goes on into the next cell: +100 left, +200 right)
+	float a2 = abs(uv2_in.y);
+	float contf = floor(a2 / 100.0 + 0.001);
+	vec2 uv2 = vec2(uv2_in.x, (uv2_in.y < 0.0 ? -1.0 : 1.0) * (a2 - contf * 100.0));
+	bool cont_l = mod(contf, 2.0) > 0.5;
+	bool cont_r = contf > 1.5;
 	int pat = pal_pat(st, ci);
 	vec3 col = pal_wall(st, ci);
 	vec3 trim = pal_trim(st, ci);
@@ -335,7 +341,8 @@ void surf_wall(int st, int ci, int flg, bool gable, vec3 P, vec2 uv, vec2 uv2, f
 			// corner pilasters (quoins), alternating long and short blocks
 			float qd = bay.end_d;
 			float qw = 0.2;
-			if (qd < qw) {
+			bool joined = uv2.x < bay.len * 0.5 ? cont_l : cont_r;
+			if (qd < qw && !joined) {
 				float qi = floor((hy + (uv2.x < bay.len * 0.5 ? 0.0 : 0.25)) / 0.5);
 				float longq = mod(qi, 2.0);
 				float qq = qd < qw * (0.78 + 0.22 * longq) ? 1.0 : 0.0;
@@ -385,8 +392,9 @@ void surf_wall(int st, int ci, int flg, bool gable, vec3 P, vec2 uv, vec2 uv2, f
 				s.metal = mix(s.metal, 0.6, clamp(mull_m + span, 0.0, 1.0));
 			} else {
 				if (!doorbay && bay.end_d > 0.5) {
-					vec2 q = vec2(bay.bx, ly2 - 1.1);
-					vec2 hs = vec2(min(0.9, bay.len / bay.nb * 0.36), 0.52);
+					bool shop = fl < 0.5 && hb > 0.35;
+					vec2 q = vec2(bay.bx, ly2 - (shop ? 1.12 : 1.1));
+					vec2 hs = shop ? vec2(min(1.15, bay.len / bay.nb * 0.42), 0.84) : vec2(min(0.9, bay.len / bay.nb * 0.36), 0.52);
 					float lit = step(0.6, h21(vec2(bay.bi + fl * 7.0, owner * 0.3)));
 					paint_opening(q, hs, 0, aa, trim, 0.06, 0.0, false, trim, 1, lit, sd, vec3(0.45, 0.55, 0.65), night, s);
 					// a balcony rail on some bays above the ground floor

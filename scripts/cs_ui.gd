@@ -72,7 +72,7 @@ func _ready() -> void:
 	hb.add_theme_constant_override("separation", 2)
 	top.add_child(hb)
 	var title := Label.new()
-	title.text = "Castle Scaper Realistic  "
+	title.text = "Castle Scaper Hex  "
 	title.add_theme_font_size_override("font_size", 17)
 	hb.add_child(title)
 	hb.add_child(_btn("New", "An empty sea (Ctrl+N)", func(): main.new_town()))
@@ -188,7 +188,9 @@ func _fill_castles() -> void:
 	var pm := castles_menu.get_popup()
 	pm.clear()
 	var labels := {"castle": "Castle with keep and gate", "village": "Village", "tower": "One tower", "harbour": "Harbour and lighthouse",
-		"bridges": "Arches, corbels, pillars and stairs", "landscape": "Landscape: mountains, rocks, woods, a road", "kingdom": "Kingdom: castle in its country"}
+		"bridges": "Arches, corbels, pillars and stairs", "landscape": "Landscape: mountains, rocks, woods, a road", "kingdom": "Kingdom: castle in its country",
+		"houses": "Houses: gables, hips and flat roofs", "apartments": "Apartments: brick, glass and roof gear", "chinese": "Chinese quarter: curved roofs, pagodas",
+		"japanese": "Japanese town: kawara roofs, shoji", "fantasy": "Fantasy town: spires, onions, mushrooms", "hamlet": "Hamlet: half-timber and thatch", "styles": "All seven styles side by side"}
 	for i in CSStarter.NAMES.size():
 		pm.add_item(labels.get(CSStarter.NAMES[i], CSStarter.NAMES[i]), i)
 	var saved: Array = main.saved_towns()

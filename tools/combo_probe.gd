@@ -101,6 +101,8 @@ func _sigs(b: CSBuild, m: Dictionary, v: int, k: int) -> Array:
 	st += ".st=" + ("1" if (m.stairs as Dictionary).has(key) else "0")
 	if k == 0:
 		st += ".land=" + str(b.land.get(v, "-"))
+	if b.town.has(v, k) and b.town.style(v, k) != CSStyle.CASTLE:
+		st += ".sty=" + str(CSStyle.KEYS[b.town.style(v, k)]) + ".hat=" + _hat_canon(b, key) + (".ground" if k == 0 else ".upper")
 	var full := st
 	if (m.caps as Dictionary).has(key):
 		var cp: Dictionary = (m.caps as Dictionary)[key]
@@ -111,6 +113,26 @@ func _sigs(b: CSBuild, m: Dictionary, v: int, k: int) -> Array:
 	pk.sort()
 	full += ".pr=" + ",".join(pk)
 	return [full, st]
+
+
+func _hat_canon(b: CSBuild, key: int) -> String:
+	## The hat's kind and, round the cell, what each side is (open / party wall / taller wall, eave or gable), up to turning and mirroring the cell.
+	var h: Dictionary = b.hats.get(key, {})
+	if h.is_empty():
+		return "-"
+	var cls: PackedByteArray = h.cls
+	var gab: PackedByteArray = h.gable
+	var n := cls.size()
+	var best := ""
+	for mirror in 2:
+		for r in n:
+			var s := ""
+			for j in n:
+				var idx := (r + j) % n if mirror == 0 else ((r - j) % n + n) % n
+				s += "%d%d" % [cls[idx], (gab[idx] if gab.size() > idx else 0)]
+			if best == "" or s < best:
+				best = s
+	return "%s:%s" % [str(h.kind), best]
 
 
 func _count_town(b: CSBuild, pr: CSProps) -> void:
@@ -415,8 +437,9 @@ func _cell(v: int) -> Dictionary:
 	return {"v": v, "pt": _p2(grid.verts[v]), "poly": poly, "nbrs": ns, "nbr_polys": nps}
 
 
-func _exhaustive(v: int, k: int) -> Dictionary:
+func _exhaustive(v: int, k: int, style: int = 0) -> Dictionary:
 	## Every arrangement of blocks at the side neighbours (one level down / level / up) and in the point's own column, built and read.
+	## With a style, every block is of that style and takes the colour scheme (class number mod 12) so the colour's part in the pick shows too.
 	var nb: PackedInt32Array = grid.nbrs[v]
 	var n := nb.size()
 	var use_below := k >= 1
@@ -439,29 +462,30 @@ func _exhaustive(v: int, k: int) -> Dictionary:
 	for c: int in rep:
 		var p: int = rep[c]
 		var t := CSTown.new()
-		t.add(v, k, 0)
+		var colr := 0 if style == 0 else c % 12
+		t.add(v, k, colr, style)
 		var own := p >> (n * per_side)
 		if use_below:
 			if own & 1:
-				t.add(v, k - 1, 0)
+				t.add(v, k - 1, colr, style)
 			if own & 2:
-				t.add(v, k + 1, 0)
+				t.add(v, k + 1, colr, style)
 		elif own & 1:
-			t.add(v, k + 1, 0)
+			t.add(v, k + 1, colr, style)
 		for i in n:
 			var g := (p >> (i * per_side)) & ((1 << per_side) - 1)
 			if use_below:
 				if g & 1:
-					t.add(nb[i], k - 1, 0)
+					t.add(nb[i], k - 1, colr, style)
 				if g & 2:
-					t.add(nb[i], k, 0)
+					t.add(nb[i], k, colr, style)
 				if g & 4:
-					t.add(nb[i], k + 1, 0)
+					t.add(nb[i], k + 1, colr, style)
 			else:
 				if g & 1:
-					t.add(nb[i], k, 0)
+					t.add(nb[i], k, colr, style)
 				if g & 2:
-					t.add(nb[i], k + 1, 0)
+					t.add(nb[i], k + 1, colr, style)
 		var b := CSBuild.new()
 		b.build(grid, t)
 		var sg: String = _sigs(b, _maps(b, null), v, k)[1]
@@ -498,6 +522,83 @@ func _exhaustive(v: int, k: int) -> Dictionary:
 			100.0 * float(by_sig[keys[i]].patterns) / float(1 << nbits), by_sig[keys[i]].rep])
 	return {"point": v, "level": k, "sides": sides_len, "bits": nbits, "per_side": per_side, "raw": 1 << nbits, "classes": rep.size(), "build_ms": Time.get_ticks_msec() - t0,
 		"outcomes": outcomes, "canon": canon, "outcome": oi, "mult": ml}
+
+
+func _style_census(style: int, towns: int, clicks: int) -> Dictionary:
+	## Random click-built towns of one style (-1: every style and the castle together): the structural / geometric / full outcomes of their styled blocks.
+	var structs := {}
+	var pieces := {}
+	var fulls := {}
+	var tops := {}
+	var blocks := 0
+	for s in towns:
+		var town := CSTown.new()
+		CSStarter.random_growth(grid, town, s, clicks, style)
+		var b := CSBuild.new()
+		b.build(grid, town)
+		var pr := CSProps.new()
+		pr.build(b)
+		var m := _maps(b, pr)
+		for v: int in town.columns():
+			if not grid.buildable(v):
+				continue
+			for k in range(0, b.top_of(v) + 1):
+				if not town.has(v, k) or town.style(v, k) == CSStyle.CASTLE:
+					continue
+				var key := CSTown.key(v, k)
+				var sg := _sigs(b, m, v, k)
+				var piece: String = str(sg[0]).substr(0, str(sg[0]).find(".pr="))
+				var sty := town.style(v, k)
+				var mat := ".mat=%d/%d" % [int(CSStyle.palette(sty, town.colour(v, k))[4]), CSStyle.roof_pattern(sty, town.colour(v, k))]
+				var tier := ".tier" if b.tier_scale(v, k) < 1.0 else ""
+				structs[sg[1] + tier] = int(structs.get(sg[1] + tier, 0)) + 1
+				pieces[piece + tier + mat] = int(pieces.get(piece + tier + mat, 0)) + 1
+				fulls[str(sg[0]) + tier + mat] = int(fulls.get(str(sg[0]) + tier + mat, 0)) + 1
+				var tk := str(b.kinds.get(key, "(not a top)"))
+				tops[tk] = int(tops.get(tk, 0)) + 1
+				blocks += 1
+	return {"blocks": blocks, "towns": towns, "tops": tops, "struct": structs.size(), "piece": pieces.size(), "full": fulls.size(),
+		"piece_chao": _chao(pieces), "full_chao": _chao(fulls), "struct_chao": _chao(structs)}
+
+
+func _chao(d: Dictionary) -> int:
+	var once := 0
+	var twice := 0
+	for sg: String in d:
+		if int(d[sg]) == 1:
+			once += 1
+		elif int(d[sg]) == 2:
+			twice += 1
+	return roundi(float(d.size()) + float(once * once) / (2.0 * maxf(1.0, float(twice))))
+
+
+func _styles_phase(towns: int, clicks: int, points: int) -> void:
+	var census := {}
+	for s in range(1, CSStyle.COUNT):
+		census[CSStyle.KEYS[s]] = _style_census(s, towns, clicks)
+		var c: Dictionary = census[CSStyle.KEYS[s]]
+		print("  %-10s %4d blocks: %d structural outcomes, %d geometries (Chao1 ~%d), %d full looks (~%d); tops %s" % [CSStyle.KEYS[s], c.blocks, c.struct, c.piece, c.piece_chao, c.full, c.full_chao, str(c.tops)])
+	census["mixed"] = _style_census(-1, towns, clicks)
+	var cm: Dictionary = census["mixed"]
+	print("  %-10s %4d styled blocks: %d structural outcomes, %d geometries (Chao1 ~%d), %d full looks" % ["mixed", cm.blocks, cm.struct, cm.piece, cm.piece_chao, cm.full])
+	var pts := _four_valent()
+	var exh := {}
+	for s in range(1, CSStyle.COUNT):
+		var union := {}
+		var rec := {}
+		for pi in mini(points, pts.size()):
+			var pt := int(pts[pi])
+			for k in [0, 1]:
+				if pi > 0 and k == 0:
+					continue
+				var e := _exhaustive(pt, k, s)
+				for o: Dictionary in e.outcomes:
+					union[str(o.sig)] = true
+				rec["p%d_k%d" % [pi, k]] = {"point": pt, "level": k, "raw": e.raw, "classes": e.classes, "outcomes": (e.outcomes as Array).size(), "build_ms": e.build_ms}
+		rec["union"] = union.size()
+		exh[CSStyle.KEYS[s]] = rec
+		print("  == %s: %d structural outcomes over all neighbourhoods at %d points (and the colour schemes)" % [CSStyle.KEYS[s], union.size(), mini(points, pts.size())])
+	out["styles"] = {"census": census, "exh": exh, "towns": towns, "clicks": clicks, "points": points}
 
 
 func _four_valent() -> Array:
@@ -658,6 +759,8 @@ func _init() -> void:
 	var exh_point := 0
 	var json := ""
 	var phases := "castle,ripple,exh,land,plans"
+	var style_towns := 40
+	var style_points := 2
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--towns="):
 			towns = int(a.get_slice("=", 1))
@@ -673,6 +776,10 @@ func _init() -> void:
 			json = a.substr(7)
 		elif a.begins_with("--phases="):
 			phases = a.get_slice("=", 1)
+		elif a.begins_with("--style_towns="):
+			style_towns = int(a.get_slice("=", 1))
+		elif a.begins_with("--style_points="):
+			style_points = int(a.get_slice("=", 1))
 		elif a == "--merge" and FileAccess.file_exists(json):
 			var f0 := FileAccess.open(json, FileAccess.READ)
 			var d0 = JSON.parse_string(f0.get_as_text())
@@ -693,6 +800,9 @@ func _init() -> void:
 		var pts := _four_valent()
 		var pt := int(pts[mini(exh_point, pts.size() - 1)])
 		out["exh"] = {"cell": _cell(pt), "k0": _exhaustive(pt, 0), "k1": _exhaustive(pt, 1)}
+		print("  (%d ms)" % (Time.get_ticks_msec() - t0))
+	if phases.contains("styles"):
+		_styles_phase(style_towns, clicks, style_points)
 		print("  (%d ms)" % (Time.get_ticks_msec() - t0))
 	if phases.contains("plans"):
 		out["plans"] = [_plan("castle"), _plan("random:3:70"), _plan("village")]

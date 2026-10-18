@@ -1,4 +1,4 @@
-# Castle Scaper Realistic — design
+# Castle Scaper Hex — design (Castle Scaper Realistic on an organic hex grid)
 
 **This is a copy of Castle Scaper (2026-10-17) with a realistic look**, asked for by Kevin: "make a copy of castle-scaper
 and use realistic rendering and post processing, realistic textures for castle. use image gen from tripo if needed but use
@@ -18,6 +18,42 @@ Copied from Castle Forge on 2026-10-17 (its welded layer engine, birds and mesh 
 replaced by click-to-stack, its castle rules by block rules, its stone paint by plain pastel plaster. Castle Forge
 itself is untouched. Townscaper was studied with REA + Ghidra (`C:\Dev\Prototypes\townscaper-re`, local only); its
 ideas were re-implemented, no code or assets were copied.
+
+## 0. The organic hex grid (this copy, 2026-10-18)
+
+`CSGrid.generate(seed, radius, step, kind)`, kind `"hex"` by default (`CSGrid.default_kind`, `--cs-grid=quad|hex`; the core test
+`tools/grid_probe.gd -- --flip=0.05 --pure --seed=N` sweeps the knobs). `grid.fn` is the corners per face (3 hex, 4 quad); `grid.quads`
+holds `fn` indices per face, so every reader loops `for k in grid.fn` over `quads[q * grid.fn + k]`.
+
+1. A triangle lattice cut to a hexagon, its step half the quad grid's (`step / 2` = 5 m, hexagon radius `2 * radius`), so a cell is
+   ~21.7 m2, the same as a quad cell (~20), and the map is as wide.
+2. Random edge flips, `FLIP_TRIES` = 20 % of the edges tried in a seeded order (`--cs-flip=`). (a, b, c) + (b, a, d) -> (c, a, d) +
+   (d, b, c): a and b lose a neighbour, c and d gain one. A flip is taken only when all four points are inner points with six neighbours
+   (`flip_pure`, `--cs-flip-pure=0` turns it off), the new diagonal lies inside, and neither triangle was flipped already: each flip
+   leaves an isolated 5-7-5-7 defect. Result (seed 1): 1141 cells, 477 hexagons, 332 pentagons, 332 heptagons (42 / 29 / 29 %).
+   History: the first version tried 5 % (68 % hexagons); Kevin asked for "more organic: more flips, fewer perfect hexagons". Non-pure
+   flips at 20 % gave the same share but let defects cluster: cells stretched to 1.51 (pure: 1.27) and 3 of 16 random castles opened
+   at corbels under heptagons, so pure stayed. Pure flips saturate near 30 % hexagons (`--cs-flip=0.6`).
+3. Relaxation like Townscaper's squares: every triangle pulled towards the best-fitting equilateral triangle of the mean area round its
+   centroid (its offsets rotated by 0 / -120 / -240 deg into one frame and summed), 255 steps, the border pinned. **The pulls are averaged
+   per point x0.8 (`HEX_PULL`)**, not summed x0.4: six or seven triangles pull each point, and a gain of 2.4 oscillated (a perfect
+   lattice came out warped, only 94 cells buildable).
+4. The dual cell of a point is the centroids of its triangles (circumcentres were tried: cells blew up to hundreds of metres). All 1141
+   cells convex.
+
+What changes downstream:
+- **No diagonal neighbours.** Each cell corner is shared by exactly three cells that are all neighbours of each other, so
+  `CSBuild.outline` never pinches a corner (`PINCH` only on the quad grid). Random click-built castles: 0 of 16 with an open or
+  non-manifold edge (5 of 16 on the quad grid).
+- **Shorter sides** (~2.9 m against ~4.5 m): a flight of stairs fits a side of 2.6 m with 0.75 m clear at each end on the hex grid
+  (3.0 m and 1.0 m on quads; the 120 deg corners leave room). Random castles grow ~7x as many flights.
+- **Pillars** almost never appear: a hex cell nearly always has a wall for an arch or corbels.
+- Towers are hexagonal prisms, walls and coasts zig-zag at 120 deg.
+- Starter castle on hex: ring 14.5-20.5 m (a 4.5 m band left a gap the sea flooded through), the keep is the centre and every other
+  neighbour, courtyard cottages only where nothing touches them (with six neighbours, random cottages joined the walls).
+- The grid overlay draws the cells' own outlines (a fan per cell); `--cs-showgrid` shows all of it, lifted over the swell, also in shots.
+- Castle doors' leaves now end flush with the recess's back wall (they reached 2 cm behind it; a short hex side left that sliver open).
+- Not copied: the combinations viewer (its numbers are the quad grid's).
 
 ## 1. The grid (`scripts/cs_grid.gd`, `CSGrid`)
 

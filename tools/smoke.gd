@@ -1,4 +1,4 @@
-extends SceneTree
+﻿extends SceneTree
 ## Builds the starter castles (or --starter=name, random:N) headless and prints the stats and the weld audit.
 ##   godot --headless --path . --script res://tools/smoke.gd [-- --starter=castle]
 
@@ -6,6 +6,8 @@ extends SceneTree
 func _init() -> void:
 	var names := []
 	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--grid="):
+			CSGrid.default_kind = a.get_slice("=", 1)
 		if a.begins_with("--starter="):
 			names.append(a.get_slice("=", 1))
 	if names.is_empty():
@@ -24,7 +26,7 @@ func _init() -> void:
 	for v in grid.verts.size():
 		if grid.buildable(v) and not CSBuild.convex(grid.dual(v)):
 			nonconvex += 1
-	print("grid: %d verts, %d quads, %d ms; buildable valence %s; non-convex cells %d" % [grid.verts.size(), grid.quads.size() / 4,
+	print("grid: %d verts, %d faces (%s), %d ms; buildable valence %s; non-convex cells %d" % [grid.verts.size(), grid.quads.size() / grid.fn, grid.kind,
 		Time.get_ticks_msec() - t0, str(valence), nonconvex])
 	for n in names:
 		var town := CSTown.new()

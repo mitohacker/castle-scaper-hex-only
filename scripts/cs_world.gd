@@ -95,22 +95,22 @@ func _heights() -> void:
 				rocks += 1
 		extra[v] = e
 		sharp[v] = float(rocks) / float(h.length()) if h.length() > 0 else 0.0
-	# a corner's height: the mean of the four columns round the quad's centre, flat where the castle's land touches
+	# a corner's height: the mean of the columns round the quad's centre, flat where the castle's land touches
 	for v: int in ground:
 		for q in grid.rings[v]:
 			if q < 0 or corner.has(q):
 				continue
 			var sum := 0.0
 			var flat := false
-			for i in 4:
-				var u := grid.quads[q * 4 + i]
+			for i in grid.fn:
+				var u := grid.quads[q * grid.fn + i]
 				if castle_land.has(u) or garden.has(u):
 					flat = true
 				sum += float(extra.get(u, 0.0))
-			var c := sum / 4.0 * 1.3
+			var c := sum / float(grid.fn) * 1.3
 			var mx := 0.0
-			for i in 4:
-				mx = maxf(mx, float(extra.get(grid.quads[q * 4 + i], 0.0)))
+			for i in grid.fn:
+				mx = maxf(mx, float(extra.get(grid.quads[q * grid.fn + i], 0.0)))
 			corner[q] = 0.0 if flat else minf(c, mx)
 
 
