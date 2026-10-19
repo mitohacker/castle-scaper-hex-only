@@ -1,7 +1,7 @@
 extends SceneTree
-## Stress test of the double hex grid (dodecagons and triangles): random click-built castles (and mixed-style towns), plus towers and walls on every cell along
-## the board's edge, each audited for open edges, non-manifold edges, flipped faces and T-junctions.
-## Run: Godot --headless --path . --script res://tools/hex_probe.gd -- --towns=40 [--clicks=70] [--styles=0,-1,1,2,3,4,5,6] [--from=0]
+## Stress test of the 12-sided grid (or, with --grid=hex, the plain hexagon grid): random click-built castles (and mixed-style towns), plus towers and walls on every
+## cell along the board's edge, each audited for open edges, non-manifold edges, flipped faces and T-junctions.
+## Run: Godot --headless --path . --script res://tools/hex_probe.gd -- --towns=40 [--clicks=70] [--styles=0,-1,1,2,3,4,5,6] [--from=0] [--grid=hex]
 
 
 func _initialize() -> void:

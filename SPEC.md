@@ -133,7 +133,16 @@ each is fixed at the source, none is a special case for the audit (the whole lis
   instead of overlapping, and no two courses cross inside a cell.
 - **Straight walls**: a union of rectangles chained into loops by position within 3 mm (rounding to a millimetre failed when a corner fell on .5).
 
-@@STRESS@@
+**Stress numbers** (`tools/hex_probe.gd --towns=150 --styles=0,-1 --from=N`: 150 click-built 70-click castles of one style and 150 of mixed styles, plus the
+board-edge rings, 303 audited towns per range). 12-sided grid: ranges N = 0, 1000, 2000, 3000, 4000, 5000, 6000, 7000 and 8000, 2727 towns, **0 defects** (a
+first sample of 15 towns had a defect in every one before `PT` came down to 0.3 m; after that none was seen, and only the first 60 towns were looked at
+while tuning). Hexagon grid (`--grid=hex`, 100 towns of each kind): 203 audited, 0 defects. Straight walls (`tools/wall_probe.gd`: 3 random walls of
+random heading and length over a 40-click random castle, 120 towns, 360 walls): **1 town with a defect, town 15** (non-manifold 2, flipped 4: a crenel's
+corner of a wall falls exactly on a crenel's corner of a block the wall runs through, the wall's parapet over the block's roof); walls alone (40 towns of 4
+random walls each, crossing at any angle): 1 in 60 (town 18: two walls cross at 30 degrees, a thin wedge of parapet); the shapes a player draws
+(`tools/wall_shapes.gd`: rings, L, T, cross, star, end to end, on top of each other) all closed.
+
+
 
 ## 1. The grid (`scripts/cs_grid.gd`, `CSGrid`)
 

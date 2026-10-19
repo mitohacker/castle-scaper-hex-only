@@ -11,7 +11,9 @@ on the island, as before. It is the truncated hexagonal tiling (3.12.12): dodeca
 between every three of them is a little equilateral triangle (0.84 m2, same side). The triangles are too small to build on: they stay in the grid
 (so every corner is shared by exactly three cells and two blocks never touch at only a corner) but are not buildable, little pits between the
 blocks that the shore and the landscape fill in. The sides of the cells run in 12 directions (multiples of 30 degrees), the lines of a hexagon
-grid and of the same grid turned by 30 degrees. See SPEC section 0.
+grid and of the same grid turned by 30 degrees. See SPEC section 0. `shots/hex_grid_plan.svg` is a plan of the cells (dodecagons dark, triangles light);
+`shots/dodeca_castle.png` and `dodeca_castle_walls.png` are pictures of the castle starter and of straight walls on it (OpenGL compatibility renderer under
+software GL, so the sea is washed out); the older `shots/hex_*` pictures were rendered on earlier grids.
 
 **Plain hexagons too.** The **Cells** button next to the build types, or **H** (press twice: it starts a new empty sea), switches to the plain
 regular hexagon grid of before, and back; `--cs-grid=hex` starts the game on it. Saved castles remember their grid.
