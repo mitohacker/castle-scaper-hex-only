@@ -73,9 +73,8 @@ static func _nearest_angle(grid: CSGrid, cells: Array, c: Vector2, ang: float) -
 static func _castle(grid: CSGrid, town: CSTown) -> void:
 	var cv := _centre(grid)
 	var c := grid.verts[cv]
-	# the curtain: the twelve big cells two steps out, which touch their neighbours side to side (a closed ring the sea cannot
-	# find a way through), and the small cells between them
-	var ring := _band(grid, c, 14.5, 23.0)
+	# the hex grid's points are 5 m apart: a 4.5 m band can leave a gap the sea floods through
+	var ring := _band(grid, c, 14.5, 20.5)
 	for v: int in ring:
 		town.add(v, 0, 0)
 		town.add(v, 1, 1 if CSBuild.h01(v, 1) < 0.5 else 0)
@@ -110,8 +109,9 @@ static func _castle(grid: CSGrid, town: CSTown) -> void:
 	# the keep: a block of cells three high with a round tower rising from its middle
 	var keep := [cv]
 	var knb: PackedInt32Array = grid.nbrs[cv]
+	var arm := 2 if grid.kind == CSGrid.KIND_HEX else 6
 	for i in knb.size():
-		if i % 4 == 0:                   # every other big neighbour (they alternate with the small ones), or the keep fills the courtyard
+		if i % arm == 0:                 # every other neighbour of the hexagon grid (three arms), two opposite big ones of the 12-sided (they alternate with the small): or the keep fills the courtyard
 			keep.append(knb[i])
 	for v: int in keep:
 		for k in 3:
@@ -125,7 +125,7 @@ static func _castle(grid: CSGrid, town: CSTown) -> void:
 	for v: int in court:
 		if Array(grid.nbrs[v]).any(func(u: int) -> bool: return town.has(u, 0)):
 			continue                     # six neighbours make touching likely; a cottage stands alone
-		if rng.randf() < 0.6:
+		if rng.randf() < 0.85:
 			town.add(v, 0, [2, 3, 5, 9, 7][rng.randi_range(0, 4)])
 
 
@@ -355,15 +355,10 @@ static func _kingdom(grid: CSGrid, town: CSTown) -> void:
 		if town.top(v) < 0 and town.wild_heights(v) == "":
 			for i in 1 + int(CSBuild.h01(v, 11) * 2.0):
 				town.wild_add(v, CSTown.T_ROCK)
-	# the cells are 5 to 11 m across: a wood needs a wide band to be more than a few trees
-	for v: int in _band(grid, c + Vector2(-30.0, 14.0), 0.0, 16.0):
+	for v: int in _band(grid, c + Vector2(-30.0, 14.0), 0.0, 10.0):
 		if town.top(v) < 0 and town.wild_heights(v) == "":
 			for i in 2 + int(CSBuild.h01(v, 5) * 2.0):
 				town.wild_add(v, CSTown.T_TREE)
-	# a few trees on the foot of the mountains: pines
-	for v: int in _band(grid, mc, 22.0, 30.0):
-		if town.top(v) < 0 and town.wild_heights(v) == "" and CSBuild.h01(v, 12) < 0.5:
-			town.wild_add(v, CSTown.T_TREE)
 	for v: int in _band(grid, c + Vector2(24.0, 14.0), 0.0, 7.0):
 		if town.top(v) < 0 and town.wild_heights(v) == "":
 			town.wild_add(v, CSTown.T_TREE)

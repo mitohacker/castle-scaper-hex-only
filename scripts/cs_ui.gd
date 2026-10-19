@@ -28,6 +28,7 @@ var castles_menu: MenuButton
 var status: Label
 var stats: Label
 var b_straight: Button
+var b_cells: Button
 var help: Label
 
 
@@ -137,9 +138,15 @@ func _ready() -> void:
 	b_straight = Button.new()
 	b_straight.focus_mode = Control.FOCUS_NONE
 	b_straight.toggle_mode = true
-	b_straight.tooltip_text = "Straight walls (T): drag along one of the grid's 12 directions, a ghost shows the wall, release builds it; Esc cancels"
+	b_straight.tooltip_text = "Straight walls (T): drag along one of the grid's 12 directions and a ghost shows one straight wall, the release builds it (one undo step); Esc or the right button cancels; castle types only"
 	b_straight.pressed.connect(func(): main.set_straight(b_straight.button_pressed))
 	th_box.add_child(b_straight)
+	# which cells: 12-sided (the default) or plain hexagons
+	b_cells = Button.new()
+	b_cells.focus_mode = Control.FOCUS_NONE
+	b_cells.tooltip_text = "Cells (H): 12-sided cells, or plain hexagons. Starts a new empty sea, so it asks you to press twice."
+	b_cells.pressed.connect(func(): main.switch_cells())
+	th_box.add_child(b_cells)
 	# the colours
 	swatch_bar = PanelContainer.new()
 	root.add_child(swatch_bar)
@@ -161,7 +168,7 @@ func _ready() -> void:
 		sh.add_child(b)
 		swatches.append(b)
 	help = Label.new()
-	help.text = "Click: build  ·  Drag: preview a row, release builds (Esc cancels)  ·  T: straight wall  ·  Right-click: take away  ·  Tab / F1-F12: build type  ·  W A S D / middle-drag: move  ·  Q E / right-drag: turn  ·  Wheel: zoom  ·  Ctrl+Z: undo"
+	help.text = "Click: build  ·  Drag: preview a row, release builds (Esc cancels)  ·  T: straight wall  ·  Right-click: take away  ·  Tab / F1-F12: build type  ·  H: 12 or 6 sided cells  ·  W A S D / middle-drag: move  ·  Q E / right-drag: turn  ·  Wheel: zoom  ·  Ctrl+Z: undo"
 	help.add_theme_font_size_override("font_size", 13)
 	help.add_theme_color_override("font_color", Color(1, 1, 1, 0.95))
 	help.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.45))
@@ -241,6 +248,8 @@ func refresh() -> void:
 		b_straight.text = "Straight wall: On (T)" if main.straight_mode else "Straight wall (T)"
 		b_straight.add_theme_color_override("font_color", Color(0.1, 0.35, 0.65) if main.straight_mode else INK)
 		b_straight.add_theme_font_size_override("font_size", 18 if main.straight_mode else 15)
+	if b_cells != null:
+		b_cells.text = "Cells: 6 sides (H)" if main.grid.kind == CSGrid.KIND_HEX else "Cells: 12 sides (H)"
 	for ti in type_btns.size():
 		var tbn: Button = type_btns[ti]
 		tbn.add_theme_color_override("font_color", Color(0.1, 0.35, 0.65) if ti == main.build_type else INK)

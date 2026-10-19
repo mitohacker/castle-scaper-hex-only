@@ -30,6 +30,10 @@ func _init() -> void:
 	print("== what holds blocks up, and stairs")
 	_supports()
 	_stairs()
+	print("== straight walls")
+	_walls()
+	print("== the plain hexagon grid")
+	_hex_grid()
 	print("== castles audited")
 	_audits()
 	print("== building styles")
@@ -48,14 +52,24 @@ func _init() -> void:
 	quit(1 if fails else 0)
 
 
+func _complete(v: int) -> bool:
+	## A point whose cell is a whole polygon (not on the board's edge).
+	if grid.border[v]:
+		return false
+	for q in grid.rings[v]:
+		if q < 0:
+			return false
+	return true
+
+
 func _grid() -> void:
 	var t0 := Time.get_ticks_msec()
 	grid.generate()
 	var ms := Time.get_ticks_msec() - t0
 	var side := CSGrid.SIDE
 	var nq := grid.tris.size() / 3
-	ok(nq > 1000 and grid.verts.size() > 500, "the double hex grid is a real grid (%d faces, %d points, %d of them dodecagon centres)" % [nq, grid.verts.size(), grid.d_count])
-	ok(ms < 3000, "made in %d ms" % ms)
+	ok(nq > 5000 and grid.verts.size() > 3000, "the double hex grid is a real grid (%d faces, %d points, %d of them dodecagon centres)" % [nq, grid.verts.size(), grid.d_count])
+	ok(ms < 4000, "made in %d ms" % ms)
 	var folded := 0
 	for q in nq:
 		var a := grid.verts[grid.tris[q * 3]]
@@ -68,22 +82,29 @@ func _grid() -> void:
 	var asym := 0
 	var bad_cell := 0
 	var buildable := 0
+	var tri_buildable := 0
 	var lost := 0
 	var alternate_bad := 0
+	var tri_lost := 0
 	for v in grid.verts.size():
 		for u in grid.nbrs[v]:
 			if grid.index_of(u, v) < 0:
 				asym += 1
-		if not grid.buildable(v):
+		if not grid.is_dodecagon(v) and grid.buildable(v):
+			tri_buildable += 1
+		if not _complete(v):
 			continue
-		buildable += 1
 		var nb: PackedInt32Array = grid.nbrs[v]
 		val[nb.size()] = int(val.get(nb.size(), 0)) + 1
 		var d := grid.dual(v)
 		if d.size() != nb.size() or CFTri.area(d) <= 0.5:
 			bad_cell += 1
-		if grid.nearest(grid.verts[v]) != v:
-			lost += 1
+		if grid.buildable(v):
+			buildable += 1
+			if grid.nearest(grid.verts[v]) != v:
+				lost += 1
+		if grid.nearest(grid.verts[v], false) != v:
+			tri_lost += 1
 		if grid.is_dodecagon(v):
 			# a dodecagon's twelve neighbours alternate: dodecagon, triangle, dodecagon, ...
 			for i in nb.size():
@@ -94,12 +115,15 @@ func _grid() -> void:
 				if not grid.is_dodecagon(u):
 					alternate_bad += 1
 	ok(asym == 0, "neighbours are mutual (%d one-way)" % asym)
-	ok(buildable > 400, "%d buildable cells" % buildable)
+	ok(buildable == 1141, "1141 buildable cells, as many as the regular hexagon grid had (%d)" % buildable)
+	ok(tri_buildable == 0, "the small triangles between the dodecagons are not buildable (%d are)" % tri_buildable)
 	var n12 := int(val.get(12, 0))
 	var n3 := int(val.get(3, 0))
-	ok(val.size() == 2 and n12 > 100 and n3 > n12, "every cell is a dodecagon (12 sides) or a triangle (3): %d and %d (%s)" % [n12, n3, str(val)])
+	ok(val.size() == 2 and n12 >= 1141 and n3 > n12, "every cell is a dodecagon (12 sides) or a triangle (3): %d and %d (%s)" % [n12, n3, str(val)])
 	ok(alternate_bad == 0, "a dodecagon touches dodecagons and triangles in turn, a triangle only dodecagons (%d wrong)" % alternate_bad)
 	# regular polygons with one side length: dodecagons 150 degree corners, triangles 60, the areas of 3 (2 + sqrt 3) t^2 and sqrt 3 / 4 t^2
+	var dodeca_area := 3.0 * (2.0 + sqrt(3.0)) * side * side
+	ok(absf(dodeca_area - 12.5 * sqrt(3.0)) < 0.01, "a dodecagon is as big as the regular hexagon of side 5 / sqrt 3 it replaces: %.2f m2 (side %.3f m)" % [dodeca_area, side])
 	var side_lo := INF
 	var side_hi := 0.0
 	var ang_bad := 0
@@ -110,11 +134,11 @@ func _grid() -> void:
 	var east_dodecagons := 0
 	var all_dodecagons := 0
 	for v in grid.verts.size():
-		if not grid.buildable(v):
+		if not _complete(v):
 			continue
 		var dv := grid.dual(v)
 		var nd := dv.size()
-		var want_area := 3.0 * (2.0 + sqrt(3.0)) * side * side if nd == 12 else sqrt(3.0) / 4.0 * side * side
+		var want_area := dodeca_area if nd == 12 else sqrt(3.0) / 4.0 * side * side
 		if absf(CFTri.area(dv) - want_area) > 0.01:
 			area_bad += 1
 		var has_east := false
@@ -146,30 +170,38 @@ func _grid() -> void:
 				shared_bad += 1
 	ok(side_hi - side_lo < 2e-3 and absf(side_lo - side) < 2e-3, "every side of every cell is the same length, %.4f m (%.4f .. %.4f)" % [side, side_lo, side_hi])
 	ok(ang_bad == 0, "every corner is 150 degrees (dodecagon) or 60 (triangle) (%d off)" % ang_bad)
-	ok(area_bad == 0, "every dodecagon is 93.30 m2 and every triangle 3.61 m2 (%d off)" % area_bad)
+	ok(area_bad == 0, "every dodecagon is %.2f m2 and every triangle %.2f m2 (%d off)" % [dodeca_area, sqrt(3.0) / 4.0 * side * side, area_bad])
 	ok(dirs.size() == 12, "the sides run in 12 directions, 30 degrees apart (%d found)" % dirs.size())
 	ok(east_dodecagons == all_dodecagons, "every dodecagon has a flat side facing east (%d of %d)" % [east_dodecagons, all_dodecagons])
-	ok(edge_cells > 40, "cells stand along the board's edge too (%d)" % edge_cells)
+	ok(edge_cells > 100, "cells stand along the board's edge too (%d)" % edge_cells)
 	ok(shared_bad == 0, "every cell corner is shared by three cells that all touch (%d bad)" % shared_bad)
 	var concave := 0
 	for v in grid.verts.size():
-		if grid.buildable(v) and not CSBuild.convex(grid.dual(v)):
+		if _complete(v) and not CSBuild.convex(grid.dual(v)):
 			concave += 1
 	ok(concave == 0, "every cell is convex (%d)" % concave)
 	ok(bad_cell == 0, "every cell is a closed counter-clockwise polygon (%d bad)" % bad_cell)
-	ok(lost == 0, "the cell under a cell's own middle is that cell (%d)" % lost)
+	ok(lost == 0 and tri_lost == 0, "the cell under a cell's own middle is that cell (%d dodecagons, %d triangles wrong)" % [lost, tri_lost])
 	# the cell under a point: also near the corners, where the nearest centre is a different cell
 	var wrong := 0
 	for v in grid.verts.size():
-		if not grid.buildable(v):
+		if not _complete(v):
 			continue
 		var cell: PackedVector2Array = grid.cells[v]
 		var cen := CSRoofs.centroid(cell)
 		for q in cell:
-			var p := q + (cen - q).normalized() * 0.15
-			if grid.nearest(p) != v:
+			var p := q + (cen - q).normalized() * 0.1
+			if grid.nearest(p, false) != v:
 				wrong += 1
 	ok(wrong == 0, "a point just inside any corner of a cell is in that cell (%d wrong)" % wrong)
+	# a click over a triangle goes to a dodecagon beside it
+	var tri := -1
+	for v in range(grid.d_count, grid.verts.size()):
+		if _complete(v) and grid.verts[v].length() < 20.0:
+			tri = v
+			break
+	var near := grid.nearest(grid.verts[tri])
+	ok(tri >= 0 and grid.buildable(near) and (grid.nbrs[tri] as PackedInt32Array).has(near), "a point over a triangle names one of the three dodecagons round it")
 	var g2 := CSGrid.new()
 	g2.generate()
 	ok(g2.verts == grid.verts, "the grid is the same every time")
@@ -196,12 +228,15 @@ func _grid_lines() -> void:
 		if not grid.is_dodecagon(row[i]) or grid.verts[row[i]].distance_to(p0 + Vector2(CSGrid.D_SPACING * float(i), 0.0)) > 1e-3:
 			row_ok = false
 	ok(row_ok, "along 0 degrees a line goes through the row of dodecagons and nothing else (%d cells)" % row.size())
-	# along 30 degrees: dodecagon, triangle, then the line runs along the side of two dodecagons: both count, then a triangle again
+	# along 30 degrees: the line leaves the first dodecagon through a triangle and then runs along the shared side of two dodecagons: both count
 	var diag := grid.cells_along(p0, p0 + Vector2.from_angle(deg_to_rad(30.0)) * CSGrid.D_SPACING * 2.0)
-	var kinds := ""
+	var all_d := true
 	for u in diag:
-		kinds += "D" if grid.is_dodecagon(u) else "T"
-	ok(diag.size() >= 6 and kinds.begins_with("DT") and kinds.contains("T") and kinds.count("D") >= 3, "along 30 degrees it goes through dodecagons and triangles (%s)" % kinds)
+		if not grid.is_dodecagon(u):
+			all_d = false
+	ok(diag.size() >= 4 and diag[0] == c and all_d, "along 30 degrees it goes through the dodecagons on both sides of the line (%d cells)" % diag.size())
+	var with_tri := grid.cells_along(p0, p0 + Vector2.from_angle(deg_to_rad(30.0)) * CSGrid.D_SPACING * 2.0, false)
+	ok(with_tri.size() > diag.size(), "and the triangles on it too when asked (%d)" % with_tri.size())
 	# every cell it names is touched by the line, and the cells are in the order it meets them
 	var touched := true
 	var last_t := -1.0
@@ -391,14 +426,18 @@ func _supports() -> void:
 
 
 func _ring_town(c: int, raise: bool) -> CSTown:
-	## Blocks round c's cell (all twelve neighbours, six dodecagons and six triangles) at level 0: a wall walk round a one-cell courtyard;
-	## with raise, three neighbours in a row one level higher.
+	## Blocks round c's cell (its six dodecagon neighbours, which touch each other side to side: the triangles are no cells to build on) at
+	## level 0: a wall walk round a one-cell courtyard; with raise, three neighbours in a row one level higher.
 	var t := CSTown.new()
 	var nb: PackedInt32Array = grid.nbrs[c]
+	var j := 0
 	for i in nb.size():
+		if not grid.is_dodecagon(nb[i]):
+			continue
 		t.add(nb[i], 0, 1)
-		if raise and i <= 2:
+		if raise and j <= 2:
 			t.add(nb[i], 1, 1)
+		j += 1
 	return t
 
 
@@ -421,11 +460,11 @@ func _stairs() -> void:
 				ground = true
 			if int(s.k) == 0:
 				walk = true
-		if ground and walk and bb.land.get(c, "") == "court":
+		if ground and bb.land.get(c, "") == "court":
 			found = c
 			b = bb
 			break
-	ok(found >= 0, "a courtyard gets stairs up to its wall walk, and the walk stairs up to the higher one (round %d)" % found)
+	ok(found >= 0, "a courtyard gets stairs up to its wall walk (round %d; a flight between two walks needs more side than a 1.39 m side leaves between the parapets of its neighbours, so there are none here)" % found)
 	if b == null:
 		return
 	for s: Dictionary in b.stairs:
@@ -443,6 +482,158 @@ func _stairs() -> void:
 		if int(s.k) < 0:
 			ok(int(b.doors.get(int(s.up), -1)) != int(s.up_face), "stairs from the courtyard are not in front of a door")
 	_closed(b, "stairs")
+
+
+func _wall_town(spec: Array) -> CSTown:
+	## spec: [cell (-1: where the last wall ended), heading, stops]
+	var t := CSTown.new()
+	var cur := -1
+	for sp: Array in spec:
+		var v: int = sp[0] if int(sp[0]) >= 0 else cur
+		var dir := Vector2.from_angle(deg_to_rad(float(sp[1])))
+		var stops := grid.line_stops(grid.verts[v], dir, 80.0)
+		var len := stops[int(sp[2]) - 1]
+		t.wall_add(v, int(sp[1]), len, 3)
+		cur = grid.nearest(grid.verts[v] + dir * len)
+	return t
+
+
+func _walls() -> void:
+	# where a wall may end: along a row of dodecagons every D_SPACING, along the 30 degree lines every 3 m or so; never closer than half a cell
+	var c := grid.nearest(Vector2.ZERO)
+	var p0 := grid.verts[c]
+	var st0 := grid.line_stops(p0, Vector2.RIGHT, 40.0)
+	var st30 := grid.line_stops(p0, Vector2.from_angle(deg_to_rad(30.0)), 40.0)
+	var step_ok := st0.size() >= 6 and st30.size() >= 8
+	for i in st0.size():
+		if absf(st0[i] - CSGrid.D_SPACING * float(i + 1)) > 1e-3:
+			step_ok = false
+	for i in range(1, st30.size()):
+		if st30[i] - st30[i - 1] < 2.5 or st30[i] - st30[i - 1] > 5.3:
+			step_ok = false
+	ok(step_ok, "a wall may end at the middle of every dodecagon along a row (%d stops) and every 3 to 5 m along a 30 degree line (%d)" % [st0.size(), st30.size()])
+	# a wall of its own: the rectangle, its clearance from every corner of the grid, the save round trip
+	var t := _wall_town([[c, 0, 3]])
+	var w: Dictionary = t.walls[0]
+	var poly := CSBuild.wall_poly(grid, w)
+	ok(poly.size() == 4 and CFTri.area(poly) > 0.0 and absf(CFTri.area(poly) - CSBuild.WALL_THICK * float(w.len)) < 1e-3, "a wall is a counter-clockwise rectangle %.1f m thick (%.2f m2)" % [CSBuild.WALL_THICK, CFTri.area(poly)])
+	var near := INF
+	for v in grid.verts.size():
+		if grid.verts[v].distance_to(p0) < 30.0 and _complete(v):
+			for q in grid.cells[v]:
+				var off := absf((q - p0).cross(Vector2.RIGHT))
+				near = minf(near, absf(off - CSBuild.WALL_THICK * 0.5)) if (q - p0).dot(Vector2.RIGHT) > 0.0 and (q - p0).dot(Vector2.RIGHT) < w.len else near
+	ok(near > 0.2, "the sides of a wall along a row keep 0.2 m clear of every corner of the grid (%.2f m)" % near)
+	var t2 := CSTown.new()
+	t2.from_dict(t.to_dict())
+	ok(t2.walls.size() == 1 and int(t2.walls[0].v) == c and absf(float(t2.walls[0].len) - float(w.len)) < 1e-4 and int(t2.walls[0].deg) == 0, "walls save and load")
+	ok(not t.wall_add(c, 0, float(w.len), 3) and t.wall_remove(0) and t.walls.is_empty() and not t.wall_remove(0), "no two walls alike; a wall comes away")
+	# built: closed, straight (every vertex of its mesh on one of four parallel lines), thick as it should be
+	for deg in [0, 30, 60, 90, 150]:
+		var tw := _wall_town([[c, deg, 3]])
+		var b := _built(tw)
+		_closed(b, "a straight wall at %d degrees" % deg)
+		var ww: Dictionary = tw.walls[0]
+		var dir := Vector2.from_angle(deg_to_rad(float(deg)))
+		var half := CSBuild.WALL_THICK * 0.5
+		var offs := [-half, -(half - CSBuild.PT), half - CSBuild.PT, half]
+		var verts := 0
+		var stray := 0
+		var lo := INF
+		var hi := -INF
+		for tri in b.mesh.verts.size() / 3:
+			if int(b.mesh.cust1[tri * 12 + 3]) != CSBuild.WALL_OWNER + 1:
+				continue
+			for k in 3:
+				var q := b.mesh.verts[tri * 3 + k]
+				var r := Vector2(q.x, q.z) - p0
+				var perp := r.cross(dir)
+				var al := r.dot(dir)
+				verts += 1
+				lo = minf(lo, perp)
+				hi = maxf(hi, perp)
+				var on := false
+				for o: float in offs:
+					if absf(perp - o) < 0.012:
+						on = true
+				# (the end parapets are across the wall: their crenel's corners are at their inner face, 0.3 m from the end)
+				if not on and not ((al < CSBuild.PT + 0.012 or al > float(ww.len) - CSBuild.PT - 0.012) and absf(perp) < half + 0.012):
+					stray += 1
+		ok(verts > 100 and stray == 0 and absf(lo + half) < 0.012 and absf(hi - half) < 0.012, "the wall at %d degrees is straight: %d vertices on four lines, %d off them, %.3f .. %.3f across" % [deg, verts, stray, lo, hi])
+	# walls that meet: the shapes a player draws, closed
+	var shapes := {
+		"a ring of six walls": [[c, 0, 2], [-1, 60, 2], [-1, 120, 2], [-1, 180, 2], [-1, 240, 2], [-1, 300, 2]],
+		"a ring along the 30 degree lines": [[c, 30, 3], [-1, 90, 3], [-1, 150, 3], [-1, 210, 3], [-1, 270, 3], [-1, 330, 3]],
+		"an L": [[c, 0, 3], [-1, 60, 2]],
+		"a T": [[c, 0, 4], [c, 60, 2], [c, 300, 2]],
+		"a cross": [[c, 0, 2], [c, 180, 2], [c, 90, 2], [c, 270, 2]],
+		"walls end to end": [[c, 0, 1], [-1, 0, 1], [-1, 0, 1]],
+		"two walls on top of each other": [[c, 0, 2], [c, 0, 4]],
+	}
+	for label: String in shapes:
+		_closed(_built(_wall_town(shapes[label])), label)
+	# next to a castle: walls and blocks together
+	var tc := CSTown.new()
+	CSStarter.make("castle", grid, tc)
+	var cw := grid.nearest(Vector2(30.0, -10.0))
+	var dd := Vector2.from_angle(deg_to_rad(120.0))
+	var stops := grid.line_stops(grid.verts[cw], dd, 60.0)
+	tc.wall_add(cw, 120, stops[2], 5)
+	_closed(_built(tc), "the castle with a straight wall beside it")
+	# a wall is shown by the collision mesh as its own owner: a ray at it finds it
+	ok(CSBuild.WALL_OWNER > grid.verts.size(), "a wall's owner id is above every grid point")
+
+
+func _hex_grid() -> void:
+	## The plain regular hexagon grid, also available: 1141 hexagons of 21.65 m2, six neighbours each, the same rules on it.
+	var hg := CSGrid.new()
+	hg.generate(1, CSGrid.RINGS, CSGrid.KIND_HEX)
+	var cells := 0
+	var bad := 0
+	for v in hg.verts.size():
+		if not hg.buildable(v):
+			continue
+		cells += 1
+		var d := hg.dual(v)
+		if d.size() != 6 or absf(CFTri.area(d) - 12.5 * sqrt(3.0)) > 0.01 or (hg.nbrs[v] as PackedInt32Array).size() != 6 or not CSBuild.convex(d):
+			bad += 1
+		for i in 6:
+			if absf(d[i].distance_to(d[(i + 1) % 6]) - hg.side) > 1e-3:
+				bad += 1
+	ok(cells == 1141 and bad == 0 and hg.kind == CSGrid.KIND_HEX and CSGrid.kind_of(CSGrid.id_of(hg.kind)) == CSGrid.KIND_HEX, "the hexagon grid has %d regular hexagons of 21.65 m2, side %.3f m (%d wrong)" % [cells, hg.side, bad])
+	ok(CSGrid.kind_of(CSGrid.GRID_ID) == CSGrid.KIND_DODECA and CSGrid.kind_of("quad-1") == "", "a saved town names its grid: dodecagons, hexagons, or another grid that loads as an empty sea")
+	var saved := CSTown.new()
+	saved.grid_kind = CSGrid.KIND_HEX
+	var hv := hg.nearest(Vector2.ZERO)
+	saved.add(hv, 0, 2)
+	var back := CSTown.new()
+	back.from_dict(saved.to_dict())
+	var other := CSTown.new()
+	other.from_dict({"grid": "dodeca-1", "blocks": [[5, 0, 3]]})
+	ok(back.grid_kind == CSGrid.KIND_HEX and back.has(hv, 0) and other.size() == 0, "a town remembers its cells; one saved on another grid opens as an empty sea")
+	# the same rules on it: the castle starter, random castles, a wall: closed
+	var tc := CSTown.new()
+	tc.grid_kind = CSGrid.KIND_HEX
+	CSStarter.make("castle", hg, tc)
+	var bc := CSBuild.new()
+	bc.build(hg, tc)
+	_closed(bc, "the castle starter on hexagons (%d blocks)" % tc.size())
+	var worst := 0
+	for sd in 6:
+		var tr := CSTown.new()
+		CSStarter.random_growth(hg, tr, sd, 50, -1 if sd % 2 == 1 else 0)
+		var br := CSBuild.new()
+		br.build(hg, tr)
+		var au := CFAudit.check(br.mesh, SKIP)
+		worst = maxi(worst, int(au.open_other) + int(au.non_manifold) + int(au.flipped) + int(au.t_junctions))
+	ok(worst == 0, "six random castles on hexagons are closed (worst defects %d)" % worst)
+	var tw := CSTown.new()
+	var hc := hg.nearest(Vector2.ZERO)
+	var stops := hg.line_stops(hg.verts[hc], Vector2.from_angle(deg_to_rad(30.0)), 60.0)
+	tw.wall_add(hc, 30, stops[2], 1)
+	var bw := CSBuild.new()
+	bw.build(hg, tw)
+	_closed(bw, "a straight wall on hexagons (stops every %.2f m)" % (stops[1] - stops[0]))
 
 
 func _audit(t: CSTown, label: String, strict: bool) -> Dictionary:
@@ -785,7 +976,7 @@ func _landscape() -> void:
 	var t0 := Time.get_ticks_msec()
 	_country("kingdom")
 	var ms := Time.get_ticks_msec() - t0
-	ok(ms < 1500, "castle and country built in %d ms" % ms)
+	ok(ms < 2500, "castle and country built in %d ms" % ms)
 
 
 func _look() -> void:

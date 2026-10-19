@@ -8,7 +8,7 @@ func _initialize() -> void:
 		if a.begins_with("--"):
 			opt[a.substr(2).get_slice("=", 0)] = a.get_slice("=", 1) if "=" in a else "1"
 	var grid := CSGrid.new()
-	grid.generate()
+	grid.generate(1, CSGrid.RINGS, str(opt.get("grid", "dodeca")))
 	var town := CSTown.new()
 	CSStarter.make(str(opt.get("starter", "castle")), grid, town)
 	var b := CSBuild.new()
@@ -19,7 +19,11 @@ func _initialize() -> void:
 	for v in b.land:
 		kinds[b.land[v]] = int(kinds.get(b.land[v], 0)) + 1
 	print("blocks %d, land %s" % [town.size(), str(kinds)])
+	var ok := {}
+	for op: Dictionary in b.openings:
+		ok[op.kind] = int(ok.get(op.kind, 0)) + 1
 	print("props %s" % str(pr.counts))
+	print("openings %s  doors %d  stairs %d  pieces %s" % [str(ok), b.doors.size(), b.stairs.size(), str(b.stats.pieces)])
 	if opt.has("cells"):
 		for v in grid.verts.size():
 			if grid.buildable(v) and grid.verts[v].length() < 30.0:

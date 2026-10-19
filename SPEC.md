@@ -22,49 +22,69 @@ ideas were re-implemented, no code or assets were copied.
 ## 0. The double hex grid (2026-10-19)
 
 History: Kevin first wanted an organic grid, then regular hexagons (2026-10-18), then (2026-10-19): "I want a double hex grid, meaning there
-are 12 sides" and, asked what he meant, "two regular hex grids overlaid, one rotated 30 degrees, so lines run in 12 directions".
-`CSGrid.generate()` (`scripts/cs_grid.gd`) has no options: the grid is one fixed shape (the seed argument is kept for saved towns and does
-nothing). `grid.tris` holds three point ids per face (counter-clockwise), `grid.centers[q]` is the position of the cell corner that face
-stands for (not the face's centroid any more), so every reader still loops `for k in 3` over `tris[q * 3 + k]`.
+are 12 sides" and, asked what he meant, "two regular hex grids overlaid, one rotated 30 degrees, so lines run in 12 directions". My first version
+made the cells regular dodecagons of side 2.887 m (93 m2), four times the hexagons they replaced; Kevin: "double not double the size..... just
+meaning double the edges and shape". **Read as: twice the edges (12 sides instead of 6), the same size**, so the dodecagon was rescaled to the
+area of the old regular hexagon and the rest of this section is about that grid. (If "shape" also meant the plain hexagon should stay available:
+it does, see "Plain hexagons" below.)
 
-**The cell definition I picked: the truncated hexagonal tiling (3.12.12).** Every cell is a regular **dodecagon** (12 sides, 150 degree
-corners, 93.3 m2) or an equilateral **triangle** (3 sides, 60 degree corners, 3.6 m2), all with the same side, 5 / sqrt(3) = 2.887 m.
-The dodecagons' centres form a triangular lattice (spacing 2 + sqrt(3) sides = 10.77 m); a dodecagon touches its six lattice neighbours along
-a whole shared side and the gap between every three of them is a triangle. So a dodecagon has 12 neighbours (6 dodecagons and 6 triangles,
-alternating) and a triangle has 3 (the dodecagons round it). The island is the dodecagons of seven rings round the middle one, 169 of them,
-and the 384 triangles between them: **553 buildable cells**; one more ring of dodecagons (48) is sea and holds the 217 of `RINGS = 8`.
-The sides run in 12 directions (a dodecagon's 12 sides are 30 degrees apart; the six orientations 0, 30, ... 150 degrees all occur on both
-kinds of cell), which is the lines of a hexagon grid and of the same grid turned by 30 degrees.
+**The cells: the truncated hexagonal tiling (3.12.12), scaled so a dodecagon is 21.65 m2.** A building cell is a regular **dodecagon**: 12 sides,
+150 degree corners, side `SIDE` = 1.3906 m, 5.19 m across the flats, 21.65 m2: the same area as the regular hexagon of side 5 / sqrt(3) it replaces,
+and about the same width (5.19 m across against 5.0), so a tower, a house, a wall walk, a courtyard and the board itself are the size they were:
+`RINGS = 20` rings of dodecagons round the middle one (spacing `D_SPACING` = 5.19 m), the outer ring sea, **1141 buildable cells** (exactly as many
+as the hexagon grid had) in 1261 dodecagons. The dodecagons touch their six lattice neighbours along a whole shared side, and in the gap between
+every three of them is an equilateral **triangle** of the same side (0.84 m2): 2400 of them. A dodecagon has 12 neighbours (6 dodecagons and 6
+triangles, alternating), a triangle 3. The sides run in 12 directions (a dodecagon's 12 sides are 30 degrees apart; the six orientations 0, 30,
+... 150 degrees), the lines of a hexagon grid and of the same grid turned 30 degrees.
 
-*Why this and not the faces of the full overlay.* Drawn in full, two regular hexagon outlines sets turned 30 degrees against each other
+**The triangles are not buildable: I chose non-buildable filler, not merging.** At 0.84 m2 (a 1.4 m triangular post) a triangle is too small to
+hold a block, and a merged cell (a dodecagon with the triangles at some of its corners) would not be convex and would break the rule that every
+corner is shared by exactly three cells that all touch (two blocks never touch at only a corner). So the triangles stay in the grid, as points
+of the graph with three neighbours (`buildable` is false for them, a click over one goes to the nearest dodecagon, `nearest(p, false)` finds
+the cell itself) and they are little pits between the blocks: `CSBuild.fill` fills a pit with land (a footing at the water, ground at the shore)
+when two of the three cells round it are land, so the shore has no notches (`land_all()` is what the shore and the landscape see); the landscape
+(`CSWorld`) lays ground across a pit when two of its three dodecagons have ground, and its neighbour counts (`ctx`) ignore triangles; roads
+join only dodecagons. Every wall of a block that faces a pit is an ordinary open side (windows, crenels).
+
+*Why this and not the faces of the full overlay.* Drawn in full, two regular hexagon outline sets turned 30 degrees against each other
 cross in 4- and 6-valent points at irregular places and cut the plane into many small faces of different shapes (triangles, kites, squares,
 irregular pentagons, slivers of a few cm). The block rules need: (1) every cell a clean convex polygon; (2) every cell corner shared by
-exactly three cells that all touch each other, so two blocks never meet at only a corner (a crossing of four lines would be a corner shared
-by four cells, two of which only touch at that point: the "pinch" case this project removed); (3) a board that is a hexagon-ish island; (4) no
-feature of a few cm, because the layer engine merges vertices closer than 3.5 cm and a sliver cell would be lost or leave a crack. The
-3.12.12 tiling is the one 12-sided pattern that meets all four: its edges all lie on the 12 directions of the two overlaid grids (so a
-straight wall along a grid line is always a run of whole sides and cell edges), it is regular (all sides equal, two corner angles), and
-every corner is trivalent. The price: the two kinds of cell differ a lot in size (a 93 m2 dodecagon next to a 3.6 m2 triangle), so a
-triangle is a slim 2.9 m tower and a dodecagon a drum 11 m across; the rules that assumed six sides were fixed at the source (below).
+exactly three cells that all touch each other (a crossing of four lines would be a corner shared by four cells, two of which only touch at that
+point: the "pinch" case this project removed); (3) a board that is a hexagon-ish island; (4) no feature of a few cm, because the layer engine
+merges vertices closer than 3.5 cm and a sliver cell would be lost or leave a crack. The 3.12.12 tiling is the one 12-sided pattern that
+meets all four: its edges lie on the 12 directions of the two overlaid grids, it is regular (all sides equal, two corner angles), and every
+corner is trivalent.
 
-**Blocks stand on grid points** (the dodecagons' centres, then the triangles'). Queries: `nearest` (the cell that contains the point,
-`_in_cell`), `dual` / `cells[v]` (the cell polygon), `face`, `wedge`, `neighbour_towards`, `index_of`, `buildable`, `is_dodecagon`, a spatial
-hash (`HASH` = 6 m) for picking, and two for lines: `snap_direction(d)` (the grid direction, a multiple of 30 degrees, nearest to a vector) and
-`cells_along(a, b)` (the buildable cells a segment passes through or runs along, in order, with a 2 cm tolerance so a line along a shared
-side takes the cells on both sides). Saved towns carry `"grid": "dodeca-1"`; a save from another grid loads as an empty sea instead of
-meaning other cells.
+**Blocks stand on grid points** (the dodecagons' centres come first: `d_count`, then the triangles'). Queries: `nearest` (the cell that contains
+the point, `_in_cell`), `dual` / `cells[v]` (the cell polygon), `face`, `wedge`, `neighbour_towards`, `index_of`, `buildable`, `is_dodecagon` (a
+building cell), `is_whole` (a cell off the sea ring, triangles included), a spatial hash (`HASH` = 6 m) for picking, and for lines `snap_direction(d)`
+(the grid direction, a multiple of 30 degrees, nearest to a vector), `cells_along(a, b)` (the cells a segment passes through or runs along, in
+order, with a 2 cm tolerance so a line along a shared side takes the cells on both sides) and `line_stops(a, dir, max)` (where a straight wall may end,
+below). Saved towns carry `"grid": "dodeca-2"` (or `"hex-2"`); a save from another grid loads as an empty sea instead of meaning other cells.
 
-What follows downstream:
-- **Equal 2.887 m sides everywhere**: a flight of stairs fits a side of 2.6 m with 0.75 m clear at each end; arch passages are at most
-  `ARCH_MAX_W` = 1.1 m wide.
-- **150 degree and 60 degree corners.** A roof's eave overhang pushed out on one side and not on its neighbours pulls the side in at both
-  ends by 1.7 times the overhang at a 150 degree corner, so on a dodecagon the outline could fold over itself (a facet wound the wrong way);
-  `CSStyleBuild._fit` scales the overhangs down until every side still runs the way it did.
-- **Eaves in the room there is**: the cap on an overhang is a share (`EAVE_FRAC` = 0.3) of the room to the neighbouring block, one value
-  for the whole cell (a per-side value made the eaves of three cells meet in a triangle's middle).
-- Starter castle: the curtain is the twelve big cells two steps out and the small ones between them (a closed ring: the big cells touch side
-  to side, a ring of alternating sizes would leak into the sea), four towers, a gate, a keep (the middle cell and every other big
-  neighbour) and courtyards of big and small cells.
+**Plain hexagons too.** `CSGrid.generate(seed, rings, CSGrid.KIND_HEX)` makes the grid of before (regular pointy-top hexagons, side 2.887 m,
+21.65 m2, 1141 cells, six neighbours): the Cells button next to the build types, the key **H** (it asks twice, because it starts a new empty sea: a
+block of one grid means nothing on the other) and `--cs-grid=hex` switch to it and back; `CSTown.grid_kind` remembers it in a save. The default
+is the 12-sided grid.
+
+**Straight walls are not cells.** A straight wall (SPEC section 7) is one rectangle `WALL_THICK` = 1.9 m wide along a grid direction that cuts across
+the cells it passes; it ends at the middle of a cell (`line_stops`: along a row of dodecagons every 5.19 m, along the 30 degree lines, which run
+along the sides between two rows, every 3 m or so), so its end face and its two sides keep at least 0.25 m clear of every corner of the grid (the
+corners of the grid lie 0.70, 1.2, 1.9 and 2.6 m off such a line; 0.95 m is between the first two): no sliver the layer engine would merge.
+
+What follows downstream (the rules were written for hexagons with 2.887 m sides; cells with 1.39 m sides and 150 degree corners need):
+- **Thinner parapets and shorter features.** The parapet is `PT` = 0.3 m thick (0.45 m left open edges and two-cell walks defective: its inner
+  offset against 1.39 m sides); stubs run `STUB_RUN` = 0.18 m past the parapet's inner corner; a crenel is `NOTCH_W` = 0.45 m, one in the middle of
+  a side, 0.2 m from a corner (and every other side of a lone tower's ring); a door is `DOOR_HW` = 0.42 m half wide, a window 0.34, both needing
+  a side of `MIN_SIDE` = 1.3 m; a flight of stairs 1.0 to 1.1 m wide fits the same side with 0.2 m clear at each end (the flights between two walk
+  levels do not fit between the parapets of a 1.39 m side: stairs come from courtyards only); lanterns stand 0.6 to 0.7 m from a door.
+- **Props sized to a 1.39 m side:** shields on sides of 1.2 m, hoardings and corbels over 1.3 m, one crate or barrel spot in the middle of a side
+  (two on a side of 4 m), ivy 0.6 to 1.4 m wide, torii in front of sides of 1.3 m.
+- **150 degree corners.** A roof's eave overhang pushed out on one side and not on its neighbours pulls the side in at both ends by 1.7 times the
+  overhang, so the outline could fold over itself (a facet wound the wrong way); `CSStyleBuild._fit` scales the overhangs down until every side still
+  runs the way it did. The cap on an overhang is a share (`EAVE_FRAC` = 0.3) of the room to the neighbouring block, one value for the whole cell.
+- **Starter castle:** the curtain is the 18 cells in the band 14.5-20.5 m (a closed ring: the cells touch side to side), four towers, a gate,
+  a keep of the middle cell and two opposite big neighbours (three arms on the hexagon grid), cottages in the courtyard.
 - The grid overlay draws the cells' own outlines (a fan per cell); `--cs-showgrid` shows all of it, lifted over the swell, also in shots.
 - Not copied: the combinations viewer (its numbers were measured on another grid and do not hold for this one).
 
@@ -93,11 +113,15 @@ the board-edge rings, `tools/hex_probe.gd --towns=200 --from=0|1000|2000|3000`).
   and on a regular hexagon the doors of the two sides next to the flight's side are 0.73 m from the flight's edge, so no flight from
   the ground ever fitted. Those two sides now need 0.7 m, every other door side 1.5 m as before.
 
-**What the double grid broke, and the fixes** (same tools; `tools/defect_min.gd --town=N --style=S [--at=x,y,z]` now also lists the plan's layers
-round any point of the minimal town). Cells with 12 sides, 150 degree corners and a 2.9 m triangle next to an 11 m drum broke rules that had
-only ever met six sides; each is fixed at the source, none is a special case for the audit:
-- **Eaves**: one cap for the whole cell (`EAVE_FRAC`), and `_fit` scales overhangs down until no side folds over (above). The outline of a
-  roof whose open side lies between closed ones was a bow tie on a 150 degree corner (a facet wound the wrong way).
+**What the 12-sided cells broke, and the fixes** (same tools; `tools/defect_min.gd --town=N --style=S [--at=x,y,z]` also lists the plan's layers round
+any point of the minimal town). Cells with 12 sides, 150 degree corners and sides of 1.39 m broke rules that had only ever met six sides of 2.887 m;
+each is fixed at the source, none is a special case for the audit (the whole list of retuned sizes is in the list above):
+- **Parapet thickness**: with `PT` = 0.45 m nearly every two-cell wall walk had open edges (every town of a first sample of 15 had a defect); 0.3 m
+  and everything else equal: none. The parapet's inner offset against sides of 1.39 m is what failed.
+- **The sea reaches the triangles from the cells beside them**, not from every unbuildable point, so courtyards are still enclosed
+  (`_find_land`); a pit between cells never counts as land of a cell (no door opens on a pit).
+- **Eaves**: one cap for the whole cell (`EAVE_FRAC`), and `_fit` scales overhangs down until no side folds over. The outline of a roof whose open
+  side lies between closed ones was a bow tie on a 150 degree corner (a facet wound the wrong way).
 - **Roof apexes**: the planes of a regular outline meet in one point that every facet computed with its own rounding, 2e-5 m apart (non-manifold
   and flipped faces at the apex of a hip roof); the facets of `CSRoofs.ridge` now share one point, and a pyramid's last ring is its inner
   outline itself, not a lerp to it.
@@ -106,20 +130,10 @@ only ever met six sides; each is fixed at the source, none is a special case for
 - **Pillars** fit the room of a small cell (radius `room - 0.6`, clear of the parapet's inner line); **stairs** are found by marching a segment
   along the side (`_ray_in`) instead of probing points, which lost every flight on a 150 degree corner.
 - **Corbels**: each course is cut to its own side's wedge (the bisector lines at its two corners), so two courses meet along the bisector
-  instead of overlapping, and no two courses cross inside a cell (a tier corner met such a crossing in 1 of 1200 towns).
-- Starters: the castle's curtain, keep and courtyards were redrawn for cells that touch only by their big sides (above), crates and barrels
-  stand one to a side (a 2.9 m side holds one spot), the kingdom's wood is wider and gets pines at the mountain foot.
+  instead of overlapping, and no two courses cross inside a cell.
+- **Straight walls**: a union of rectangles chained into loops by position within 3 mm (rounding to a millimetre failed when a corner fell on .5).
 
-**Stress numbers on the double grid** (`tools/hex_probe.gd --towns=150 --styles=0,-1 --from=N`: 150 click-built 70-click castles of one style and 150 of mixed
-styles, plus the board-edge rings, per range, 303 audited towns each). The four ranges the rules were tuned on (N = 0, 1000, 2000, 3000): 1212 towns, **0 defects**.
-Ranges not used for tuning, run with all the fixes above except where noted: 7000 and 9000 clean (303 each); 8000 has one defect, **town 8121 style 0** (one
-castle: 15 open edges and 4 T-junctions at y = 12.6, the top ledge of a wall, 207 corners, would not triangulate: a window's edge and a crenel's edge fall 4 cm
-apart in the middle of a 2.9 m side, just over the plan's 3.5 cm vertex merge; widening the crenel to 0.5 m cures it but put new defects in the tuning ranges
-(8 towns), so it is left, see section 9); 6000 had two (6008, 6084: a roof facet wound the wrong way, and a hip roof's apex in two points), both fixed afterwards by
-`_fit` and the shared apex and re-checked on the two towns only; 4000 and 5000 were clean before those last fixes and were not re-run after them.
-So the rate on ranges not tuned on is about 1 town in 300 (8121), not zero.
-
-
+@@STRESS@@
 
 ## 1. The grid (`scripts/cs_grid.gd`, `CSGrid`)
 
@@ -364,22 +378,31 @@ while previewing, a message when the stroke is built or cancelled.
 
 **Straight walls (T, or the Straight wall button).** A toggle button after the build-type buttons (`CSUi.b_straight`, text "Straight wall (T)" /
 "Straight wall: On (T)", blue and larger when on) and the key T (not with Ctrl) switch `main.straight_mode` (`set_straight`); changing the mode
-cancels a stroke in progress, and the help line names the key. With it on, a left press that moves more than 6 px starts a straight stroke
-instead of the cell-by-cell one: the stroke starts on the cell a click at the press would build on (`stroke_start` = its point, `stroke_level`
-= its level; on the landscape types the column), and its direction is `CSGrid.snap_direction` of the vector from the start to where the
-pointer is on the ground, one of the grid's 12 headings (multiples of 30 degrees), so the wall always lies on a grid line; its length is the
-pointer's distance along that heading (never behind the start). The targets are `CSGrid.cells_along(start, end)`, the buildable cells the
-line passes through or runs along, at the start's level, minus the ones a click could not build on; they are drawn as the same translucent
-ghost as the ordinary stroke, re-made at every pointer move (moving back shortens the row, going round turns it to another heading), and the
-status line says "Straight wall at N deg: M to build. Release to build them, Esc or the right button to cancel". Nothing is built while the
-button is down; the release builds the row with the same `add_block` / `add_wild` as a click as ONE undo step; Esc, the right button, a change
-of build type or of mode, or the window losing focus cancels. A press moved less than 6 px is a click and builds one block, in either mode.
-With the mode off the drag is the ordinary one.
+cancels a stroke in progress, and the help line names the key. It applies to the castle types (the landscape types keep their cell by cell drag).
+With it on, a left press that moves more than 6 px starts a straight stroke instead of the cell-by-cell one. The stroke begins in the middle of the
+cell a click at the press would build on, at the sea level (pressing on top of a block says so and does nothing); its direction is
+`CSGrid.snap_direction` of the vector from there to where the pointer is on the ground, one of the grid's 12 headings (multiples of 30 degrees), so the
+wall always lies on a grid line; its length is the one of `CSGrid.line_stops` (the distances at which the middle of a cell lies exactly on the line)
+nearest to the pointer's shadow on the line (no wall before the pointer has gone half way to the first stop), shortened until every cell the wall
+crosses is on the island. What it previews and builds is **one straight wall**, not cells: `town.walls` holds `{v, deg, len, c}`; the ghost is one
+translucent prism the shape of the wall (`CSBuild.wall_poly`), re-made at every pointer move (shorter when the pointer comes back, another heading
+when it goes round); the status line says "Straight wall at N deg, M m long. Release to build it, Esc or the right button to cancel". Nothing is built while
+the button is down; the release adds the wall (`add_wall`) as ONE undo step; Esc, the right button, a change of build type or of mode, or the window
+losing focus cancels. A press moved less than 6 px is a click and builds one block, in either mode. A right-click on a wall (the collision mesh gives it
+its own owner id, `CSBuild.WALL_OWNER + i`, `pick().wall`) takes it away, one undo step; a click on a wall's face builds on the cell beside it.
 
-Starters (`scripts/cs_starter.gd`): castle (a closed curtain of the twelve big cells two steps out and the small cells between them, four towers, a gate
-passage, a keep of the middle cell and three of its big neighbours with a round tower, three courtyard cells of the big kind with crates, barrels and bunting), village, one tower, harbour (quay, houses, striped lighthouse), bridges (two towers joined
-high up by one block on an arch, an oriel on corbels, a balcony on a pillar, a wall walk stepping down a level with
-stairs). Only blocks: every tower, roof, arch and stair in them comes from the rules. The starter closes the wall on the gate's far side
+*What a wall is* (`CSBuild._walls`): a footing and a body of its own, one level high, a rectangle `WALL_THICK` = 1.9 m wide from the middle of its cell to
+the middle of the cell it ends on, whatever cells it crosses (no rule of the cells applies to it: no door, no arch, no corbel under it, the prop
+layer keeps clear of it as of a block). The parapet is made for all the walls together, along the boundary of the walls' union
+(`_wall_loops`: every rectangle's edges cut where the others cross them, the pieces inside another rectangle dropped, collinear overlaps kept once,
+the rest chained into loops), so where walls meet or cross the parapet goes round the joint and not across the walk, a ring of walls has an inner
+parapet and an outer one, and walls end to end are one long wall; a crenel in the middle of each straight stretch, as on a wall walk. Walls
+overlapping blocks are unioned with them by the plan; the parapet of the wall stays over the block's roof there (cosmetic).
+
+Starters (`scripts/cs_starter.gd`): castle (a closed curtain of the 18 cells of the band 14.5-20.5 m, four towers, a gate
+passage, a keep of the middle cell and two opposite neighbours (three on the hexagon grid) with a round tower, cottages in the courtyard), village, one tower, harbour (quay, houses, striped lighthouse), bridges (two towers joined
+high up by one block on an arch, an oriel on corbels, a balcony on a pillar, a wall walk stepping down a level; on the 12-sided
+grid its sides are too short for the flight between the two walks). Only blocks: every tower, roof, arch and stair in them comes from the rules. The starter closes the wall on the gate's far side
 so the gate block bridges two walls and gets its arch.
 
 Picking on the pieces: a face inside a cell where its column has no block (an arch's passage, a pillar, a corbel's
@@ -411,20 +434,26 @@ events, the props on screen, a click on the sea, on a roof, on a side, right-cli
 quick clicks during worker builds, and on the bridges starter a pillar offering the empty cell it stands in and the block
 it carries).
 
-**The double grid's tests (2026-10-19).** `tests/verify_cs_core.gd` `_grid()` / `_grid_lines()`: 169 dodecagons and 384 triangles buildable, each with
-12 / 3 neighbours that alternate, every side 2.887 m, corners 150 and 60 degrees, areas 93.3 and 3.6 m2, the 12 headings of the sides, a flat side
-facing east on every dodecagon, every cell convex and counter-clockwise, every cell corner shared by exactly three mutually adjacent cells (no
-two blocks touch at only a corner), `nearest` right next to corners; `snap_direction` (multiples of 30 degrees, ties, tiny vectors) and
-`cells_along` (along 0 degrees only the row of dodecagons, along 30 degrees dodecagons and triangles, along 60 degrees every cell is touched by the
-line and they come in the order it meets them, a short line inside one cell names only that cell). `tests/verify_cs_editor.gd` adds the straight wall: the button and the T key turn the mode on and off and
-show it, a drag from a free sea cell previews exactly the predicted `cells_along` row, snapped to the grid heading although the pointer is a few
-degrees off, covering its grid line end to end, the status line says "Straight wall at N deg", the ghost follows the pointer (shorter when it
-comes back, another heading when it goes round), nothing is built while the button is down, the release builds the row as ONE undo step (one
-Ctrl+Z takes it all back), Esc and the right button cancel (and the release after builds nothing), a plain click builds one block, and with the mode
-off the drag is the ordinary paint preview again.
+**The double grid's tests (2026-10-19).** `tests/verify_cs_core.gd`: `_grid()` / `_grid_lines()`: 1141 buildable cells, every one a dodecagon with 12
+neighbours that alternate dodecagon, triangle; the triangles in the grid (2400) but not buildable; every side 1.3906 m, corners 150 and 60 degrees,
+areas 21.65 and 0.84 m2 (a dodecagon as big as the regular hexagon it replaces), the 12 headings of the sides, a flat side facing east on every
+dodecagon, every cell convex and counter-clockwise, every cell corner shared by exactly three mutually adjacent cells, `nearest` right next to corners
+and over a triangle; `snap_direction` (multiples of 30 degrees, ties, tiny vectors) and `cells_along`. `_hex_grid()`: the plain hexagon grid (1141
+regular hexagons of 21.65 m2, the save tags, the castle starter, six random castles and a wall on it, all closed). `_walls()`: where a wall may end
+(`line_stops`), the wall rectangle and its clearance from every corner, the save round trip, and walls at 0, 30, 60, 90 and 150 degrees built, closed
+and straight (every vertex of the wall's mesh on one of its four parallel lines, 1.9 m thick), the shapes a player draws (a ring of six walls along
+either kind of line, an L, a T, a cross, walls end to end, two walls on top of each other) and a wall beside the castle, all closed.
+`tests/verify_cs_editor.gd` (1600x900 or larger: a smaller window exits with code 4 and says so): the straight wall: the button and the T key turn the mode on and
+off and show it; a drag from a free sea cell previews one wall, snapped to the grid heading although the pointer is a few degrees off, as long as the
+stop nearest the pointer, the ghost one prism within the wall's width of its grid line, the status line says "Straight wall at N deg"; it shortens when
+the pointer comes back and swings to another heading when it goes round; nothing is built while the button is down; the release builds the one
+wall as ONE undo step; its built mesh is straight (every vertex on four parallel lines within 1.2 cm, 1.9 m thick, as long as the preview said);
+a click on it picks it, a right-click takes it away (one undo step), Ctrl+Z / Ctrl+Y; Esc and the right button cancel (and the release after builds
+nothing); a plain click builds one block; with the mode off the drag is the ordinary paint preview again.
 
 Tools: `tools/grid_probe.gd` (cell shapes of the double grid, `--svg=` writes the plan `shots/hex_grid_plan.svg`), `tools/hex_probe.gd` (the stress test: click-built
-castles and the board-edge rings audited), `tools/defect_min.gd` (shrinks a defective town to a few blocks and lists the plan layers near it), `tools/starter_probe.gd`
+castles and the board-edge rings audited; `--grid=hex` on the hexagon grid), `tools/wall_probe.gd` (random straight walls over random castles), `tools/wall_shapes.gd`
+(walls in the shapes a player draws), `tools/stops_probe.gd`, `tools/ring_probe.gd`, `tools/ui_probe.gd` (where the UI bars sit), `tools/defect_min.gd` (shrinks a defective town to a few blocks and lists the plan layers near it), `tools/starter_probe.gd`
 (a starter's land kinds and prop counts, `--cells` lists its cells), `tools/smoke.gd` (stats + audit of every starter and random castles, and each castle's props;
 `--starter=random:SEED:CLICKS` for the suite's 70-click castles), `tools/probe.gd` (layers through a point),
 `tools/tri_probe.gd` (triangles along an edge the audit names), `tools/edge_probe.gd` (triangles on a vertical line the

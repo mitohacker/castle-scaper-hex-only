@@ -72,6 +72,21 @@ func _classify() -> void:
 			ground[v] = true
 		elif town.wild_road(v):
 			deck[v] = true
+	# the little triangles between the dodecagons are no cells of the landscape, but the ground goes across them when two of the three
+	# dodecagons round one have ground (or castle land) under them: no hole, no coast round a pit
+	var tri_ground := {}
+	for v: int in ground.keys():
+		for u: int in grid.nbrs[v]:
+			if grid.is_dodecagon(u) or not grid.is_whole(u) or castle_land.has(u) or tri_ground.has(u):
+				continue
+			var n := 0
+			for d: int in grid.nbrs[u]:
+				if ground.has(d) or garden.has(d) or castle_land.has(d):
+					n += 1
+			if n >= 2:
+				tri_ground[u] = true
+	for u: int in tri_ground:
+		ground[u] = true
 
 
 func is_land(v: int) -> bool:
@@ -84,6 +99,27 @@ func altitude(v: int) -> float:
 
 func _heights() -> void:
 	for v: int in ground:
+		if not grid.is_dodecagon(v):
+			# a triangle between three dodecagons: the mean height of those that have ground of their own
+			var sx := 0.0
+			var sr := 0.0
+			var cnt := 0
+			for d: int in grid.nbrs[v]:
+				if ground.has(d) and grid.is_dodecagon(d):
+					cnt += 1
+			for d: int in grid.nbrs[v]:
+				if ground.has(d) and grid.is_dodecagon(d):
+					var hd := town.wild_heights(d)
+					var ed := 0.0
+					var rd := 0
+					for i in hd.length():
+						ed += MT_LEVEL if hd[i] == "m" else RK_LEVEL
+						rd += 0 if hd[i] == "m" else 1
+					sx += ed
+					sr += float(rd) / float(hd.length()) if hd.length() > 0 else 0.0
+			extra[v] = sx / float(maxi(cnt, 1))
+			sharp[v] = sr / float(maxi(cnt, 1))
+			continue
 		var h := town.wild_heights(v)
 		var e := 0.0
 		var rocks := 0
@@ -368,6 +404,8 @@ func normal_at(p: Vector2) -> Vector3:
 func ctx(v: int) -> Dictionary:
 	var c := {"water": 0, "rock": 0, "mount": 0, "road": 0, "castle": 0, "tree": 0, "land": 0, "deck": 0}
 	for u: int in grid.nbrs[v]:
+		if not grid.is_dodecagon(u):
+			continue                         # the little triangles between the dodecagons are not neighbours of the landscape
 		if not grid.buildable(u):
 			c.water += 1
 		elif town.top(u) >= 0 or (castle_land.has(u) and str(castle_land[u]) != "court"):

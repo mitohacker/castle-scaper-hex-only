@@ -48,14 +48,14 @@ static func _door_things(p: CSProps) -> void:
 			var col := 0 if sty == CSStyle.CHINESE else 1
 			var sides: Array = [-1.0, 1.0] if (sty == CSStyle.CHINESE or CSBuild.h01(slot, k, 301) < 0.35) else [1.0 if CSBuild.h01(slot, k, 302) < 0.5 else -1.0]
 			for side: float in sides:
-				var oo := o + bas.x * side * 1.05 + Vector3(0.0, 2.15, 0.0)
+				var oo := o + bas.x * side * 0.72 + Vector3(0.0, 2.15, 0.0)
 				var c := p._cand(CSProps.PAPER, 2.0, CSBuild.h01(slot, k, 303 + int(side > 0.0)), v, kk)
 				c.boxes = [CSProps.box(oo, bas, Vector3(-0.2, -0.78, 0.0), Vector3(0.2, 0.05, 0.62))]
 				c.inst = [[M_PAPER, Transform3D(bas, oo), 0, col]]
 		else:
 			# an iron lantern on a bracket beside the door (the castle's own), and now and then an awning over it
 			var first := 1.0 if CSBuild.h01(slot, k, 81) < 0.5 else -1.0
-			var m := p._mount(op, first * 0.95)
+			var m := p._mount(op, first * 0.6)
 			var q: Vector2 = m[0]
 			var oo := Vector3(q.x, float(op.y0) + 2.05, q.y)
 			var bb := CSProps.wall_basis(m[1])
@@ -260,7 +260,7 @@ static func _torii(p: CSProps) -> void:
 		var nb: PackedInt32Array = p.grid.nbrs[v]
 		for sd: Array in p._sides(v, 0):
 			var i: int = sd[0]
-			if i == door or p.b.land.has(nb[i]) or float(sd[3]) < 3.0:
+			if i == door or p.b.land.has(nb[i]) or float(sd[3]) < 1.3:
 				continue
 			var mid: Vector2 = sd[1]
 			var out: Vector2 = sd[2]

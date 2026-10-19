@@ -82,10 +82,11 @@ var stroke_targets := {}            # column -> [v, k] (a block) or [v] (a lands
 var stroke_wild := false            # the stroke places landscape columns (the build type was land, road, trees, rocks or mountains)
 var stroke_last := Vector2.ZERO     # where the stroke was last sampled
 var stroke_mi: MeshInstance3D       # the preview: one translucent prism per previewed target, the look of the hover ghost
-var straight_mode := false          # a drag lays a straight wall along a grid line (T, the Straight button)
+var cells_armed_until := -1.0         # the Cells switch asks twice: the first press arms it until this time
+var straight_mode := false          # a drag lays a straight wall along a grid line (T, the Straight button; castle types only)
 var stroke_start := Vector2.ZERO    # a straight stroke: the middle of the cell it began on
-var stroke_level := 0               # ... and the level its blocks go on
 var stroke_deg := 0                 # ... and the grid direction (degrees) the preview lies along
+var stroke_wall := {}               # ... and the wall it previews: {v: the cell, deg, len: metres} (empty: none yet)
 var history := []
 var future := []
 var dirty := true
@@ -201,7 +202,11 @@ func _ready() -> void:
 		loaded = town.load_json(str(args.load))
 	elif not fresh and not args.has("starter") and FileAccess.file_exists(AUTOSAVE):
 		loaded = town.load_json(AUTOSAVE)
-	grid.generate(town.grid_seed, town.grid_radius)
+	if args.has("grid") and CSGrid.kind_of(CSGrid.id_of(str(args.grid))) != "" and str(args.grid) != town.grid_kind:
+		# --cs-grid=hex|dodeca: the cells to build on (a town saved on the other cells does not fit)
+		town.clear()
+		town.grid_kind = CSGrid.KIND_HEX if str(args.grid) == CSGrid.KIND_HEX else CSGrid.KIND_DODECA
+	grid.generate(town.grid_seed, town.grid_radius, town.grid_kind)
 	if args.has("starter"):
 		CSStarter.make(str(args.starter), grid, town)
 	elif not loaded and not fresh:
@@ -466,6 +471,34 @@ func add_block(v: int, k: int) -> bool:
 	return true
 
 
+func add_wall(v: int, deg: int, length: float) -> bool:
+	## A straight wall from the middle of cell v along heading deg, length metres: one undo step.
+	if v < 0 or not grid.buildable(v) or length < 1.0:
+		return false
+	var snap := {} if (stroke_committing and stroke_recorded) else town.to_dict()
+	if not town.wall_add(v, deg, length, colour):
+		flash("There is a wall there already")
+		return false
+	if not snap.is_empty():
+		_record(snap)
+	var p := grid.verts[v] + Vector2.from_angle(deg_to_rad(float(deg))) * length * 0.5
+	if life != null and shot_path == "":
+		life.puff(Vector3(p.x, 0.2, p.y), true)
+	mark_changed()
+	flash("Wall built, %.1f m: Ctrl+Z takes it back" % length)
+	return true
+
+
+func remove_wall(i: int) -> bool:
+	if i < 0 or i >= town.walls.size():
+		return false
+	push_history()
+	town.wall_remove(i)
+	mark_changed()
+	flash("Wall taken away")
+	return true
+
+
 func remove_block(v: int, k: int) -> bool:
 	if not town.has(v, k):
 		return false
@@ -596,7 +629,7 @@ func _finish(b: CSBuild) -> Dictionary:
 	var landings := CFBirds.landings_from(b.mesh) if birds else {}
 	CSProps.add_perches(landings, pr.perches())
 	var w := CSWorld.new()
-	w.build(grid, b.town, b.land)
+	w.build(grid, b.town, b.land_all())
 	var tm := ArrayMesh.new()
 	w.commit(tm, mat_terrain)
 	var rd := CSRoads.new()
@@ -616,7 +649,7 @@ func _finish(b: CSBuild) -> Dictionary:
 		skip[u] = true
 	for u: int in w.deck:
 		skip[u] = true
-	return {"mesh": m, "shape": shape, "rocks": CSRocks.skirt_mesh(CSRocks.shore_loops(grid, b.land, skip)), "landings": landings, "props": pr, "prop_mm": pr.multimeshes(prop_meshes),
+	return {"mesh": m, "shape": shape, "rocks": CSRocks.skirt_mesh(CSRocks.shore_loops(grid, b.land_all(), skip)), "landings": landings, "props": pr, "prop_mm": pr.multimeshes(prop_meshes),
 		"world": w, "terrain": tm, "terrain_shape": tshape, "scatter": sc, "scatter_mm": sc.multimeshes(scatter_meshes), "roads": rd, "road_mesh": rm, "road_shape": rshape, "road_mm": rd.multimeshes(road_meshes)}
 
 
@@ -702,7 +735,7 @@ func pick(mouse: Vector2) -> Dictionary:
 	## right-click would take away.
 	var from := cam.project_ray_origin(mouse)
 	var dir := cam.project_ray_normal(mouse)
-	var out := {"add": [], "remove": [], "point": Vector3.ZERO}
+	var out := {"add": [], "remove": [], "point": Vector3.ZERO, "wall": -1}
 	var hit := {}
 	if (castle_shape.shape != null or terrain_shape.shape != null) and is_inside_tree():
 		var q := PhysicsRayQueryParameters3D.create(from, from + dir * 2500.0)
@@ -740,6 +773,12 @@ func pick(mouse: Vector2) -> Dictionary:
 	if tri < 0 or tri * 3 + 2 >= m.verts.size():
 		return out
 	var v := int(m.cust1[tri * 12 + 3]) - 1
+	if v >= CSBuild.WALL_OWNER:
+		# a straight wall: a right-click takes it away; a click beside it builds on the cell next to its face
+		out.wall = v - CSBuild.WALL_OWNER
+		if wv >= 0 and grid.buildable(wv) and not town.has(wv, 0):
+			out.add = [wv, 0]
+		return out
 	if v < 0 or not grid.buildable(v):
 		var vs := grid.nearest(Vector2(p.x, p.z))
 		if vs >= 0:
@@ -864,13 +903,42 @@ func set_build_type(t: int) -> void:
 	flash("Build: " + str(CSTown.TYPE_NAMES[build_type]))
 
 
+func switch_cells() -> void:
+	## H or the Cells button: 12-sided cells (the default) or plain hexagons. The blocks of one grid mean nothing on the other, so it starts a new empty sea;
+	## the first press only asks (press again within five seconds).
+	if building or build_task >= 0:
+		flash("Wait for the castle to finish building, then press H")
+		return
+	if time_alive > cells_armed_until:
+		cells_armed_until = time_alive + 5.0
+		var other := "6-sided hexagons" if grid.kind == CSGrid.KIND_DODECA else "12-sided cells"
+		flash("Press H again to switch to %s: it starts a new empty sea (Ctrl+S saves this one first)" % other)
+		return
+	cells_armed_until = -1.0
+	_stroke_cancel(false)
+	var kind := CSGrid.KIND_HEX if grid.kind == CSGrid.KIND_DODECA else CSGrid.KIND_DODECA
+	grid = CSGrid.new()
+	grid.generate(town.grid_seed, town.grid_radius, kind)
+	town.clear()
+	town.grid_kind = kind
+	history.clear()
+	future.clear()
+	build = null
+	_make_grid_overlay()
+	mark_changed()
+	frame_town(true)
+	if ui:
+		ui.refresh()
+	flash("An empty sea of %s" % ("hexagons: click to put down the first block" if kind == CSGrid.KIND_HEX else "12-sided cells: click to put down the first block"))
+
+
 func set_straight(on: bool) -> void:
-	## Straight wall mode: a drag lays a straight row of blocks along a grid line (a click still builds one block).
+	## Straight wall mode: a drag lays one straight wall along a grid line (a click still builds one block). Castle types only.
 	straight_mode = on
 	_stroke_cancel(false)
 	if ui:
 		ui.refresh()
-	flash("Straight walls ON: drag along a grid line (12 directions), release builds it, T turns it off" if on else "Straight walls off: a drag follows the pointer cell by cell")
+	flash("Straight walls ON: drag along one of the 12 grid directions, release builds one straight wall, T turns it off" if on else "Straight walls off: a drag follows the pointer cell by cell")
 
 
 func _held_above(v: int, k: int) -> Array:
@@ -894,8 +962,8 @@ func _inside_cell(v: int, pt: Vector2, margin: float) -> bool:
 func _update_ghost() -> void:
 	if stroke_active:
 		ghost_mi.visible = false         # the stroke's preview shows the cell under the pointer too
-		if straight_mode:
-			status_msg = "Straight wall at %d deg: %d to build. Release to build them, Esc or the right button to cancel" % [stroke_deg, stroke_cols.size()]
+		if _straight_stroke():
+			status_msg = "Straight wall at %d deg, %.1f m long. Release to build it, Esc or the right button to cancel" % [stroke_deg, float(stroke_wall.get("len", 0.0))] if not stroke_wall.is_empty() else "Straight wall at %d deg: drag further to lay it. Esc or the right button to cancel" % stroke_deg
 		else:
 			status_msg = "Drag preview: %d to build. Release to build them, Esc or the right button to cancel" % stroke_cols.size()
 		status_t = 0.3
@@ -987,7 +1055,11 @@ func frame_town(snap: bool) -> void:
 		if town.has_wild(v):
 			top_y = maxf(top_y, 0.6 + float(town.wild_heights(v).length()) * 3.0 + 3.0)
 		hi = Vector3(maxf(hi.x, p.x), maxf(hi.y, top_y), maxf(hi.z, p.y))
-	if cols.is_empty():
+	for w: Dictionary in town.walls:
+		for p: Vector2 in CSBuild.wall_ends(grid, w):
+			lo = Vector3(minf(lo.x, p.x), 0.0, minf(lo.z, p.y))
+			hi = Vector3(maxf(hi.x, p.x), maxf(hi.y, CSBuild.level_y_static(1)), maxf(hi.z, p.y))
+	if cols.is_empty() and town.walls.is_empty():
 		cam_goal = Vector3.ZERO
 		cam_dist = 70.0
 	else:
@@ -1175,6 +1247,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				var r: Array = pr.get("remove", [])
 				if not r.is_empty():
 					remove_block(r[0], r[1])
+				elif int(pr.get("wall", -1)) >= 0:
+					remove_wall(int(pr.wall))
 				else:
 					remove_wild(int(pr.get("wremove", -1)))
 	elif event is InputEventMouseMotion:
@@ -1204,20 +1278,30 @@ func _unhandled_input(event: InputEvent) -> void:
 
 # --- strokes: a left-button drag previews a row of blocks, the release builds them ------------------
 
+func _straight_stroke() -> bool:
+	## Is a drag a straight wall? In straight mode, with a castle type (the landscape types keep their cell by cell drag).
+	return straight_mode and build_type < CSTown.BUILDING_TYPES
+
+
 func _stroke_begin(pos: Vector2) -> void:
 	stroke_wild = build_type >= CSTown.BUILDING_TYPES
 	stroke_cols.clear()
 	stroke_targets.clear()
+	stroke_wall = {}
 	stroke_last = pos
-	if straight_mode:
-		# the stroke starts on the cell a click at the press would build on; without one there is no stroke
+	if _straight_stroke():
+		# a wall starts in the middle of the cell a click at the press would build on at the sea level; without one there is no stroke
 		var pk := pick(pos)
-		var v0 := int(pk.get("wadd", -1)) if stroke_wild else (int((pk.get("add", [-1]) as Array)[0]) if not (pk.get("add", []) as Array).is_empty() else -1)
-		if v0 < 0 or not grid.buildable(v0):
+		var a: Array = pk.get("add", [])
+		if a.is_empty() or not grid.buildable(int(a[0])):
 			_stroke_cancel(false)
 			return
-		stroke_start = grid.verts[v0]
-		stroke_level = 0 if stroke_wild else int((pk.add as Array)[1])
+		if int(a[1]) != 0:
+			flash("A straight wall starts on the ground: press on the sea or the land")
+			_stroke_cancel(false)
+			return
+		stroke_start = grid.verts[int(a[0])]
+		stroke_wall = {"v": int(a[0])}
 		stroke_active = true
 		_stroke_line(pk)
 		_stroke_show()
@@ -1228,29 +1312,47 @@ func _stroke_begin(pos: Vector2) -> void:
 
 
 func _stroke_line(pk: Dictionary) -> void:
-	## A straight stroke: from the middle of the cell it began on along the grid direction nearest to where the pointer is, as far as
-	## the pointer has gone along it. The targets are the cells that line passes through (or runs along), at the level of the first.
+	## A straight stroke: one straight wall from the middle of the cell it began on, along the grid direction (a multiple of 30 degrees) nearest to
+	## where the pointer is, and as far as the place along that line, where a wall may end (the middle of a cell), nearest to the pointer's
+	## shadow on it; shortened until every cell it crosses is on the island.
+	var v0 := int(stroke_wall.get("v", -1))
+	stroke_wall = {"v": v0}
 	var pt: Vector3 = pk.get("point", Vector3.ZERO)
 	var d := Vector2(pt.x, pt.z) - stroke_start
-	var dir := Vector2.ZERO
-	var len_along := 0.0
-	if pt != Vector3.ZERO and d.length() > 0.5:
-		dir = CSGrid.snap_direction(d)
-		len_along = maxf(d.dot(dir), 0.0)
-		stroke_deg = roundi(rad_to_deg(dir.angle()))
-	var cells := grid.cells_along(stroke_start, stroke_start + dir * len_along)
-	stroke_cols.clear()
-	stroke_targets.clear()
-	for c: int in cells:
-		var target := [c] if stroke_wild else [c, stroke_level]
-		if _stroke_can_build(target):
-			stroke_cols.append(c)
-			stroke_targets[c] = target
+	if pt == Vector3.ZERO or d.length() < 0.5 or v0 < 0:
+		return
+	var dir := CSGrid.snap_direction(d)
+	stroke_deg = posmod(roundi(rad_to_deg(dir.angle())), 360)
+	var along := maxf(d.dot(dir), 0.0)
+	var stops := grid.line_stops(stroke_start, dir, along + 10.0)
+	if stops.is_empty():
+		return
+	var best := -1.0
+	for s: float in stops:
+		if absf(s - along) < absf(best - along) or best < 0.0:
+			best = s
+	if best < 0.0 or along < float(stops[0]) * 0.5:
+		return                           # not as far as the first place a wall can end
+	# keep the wall inside the island: the stops beyond the last good one are dropped
+	var len := 0.0
+	for s: float in stops:
+		if s > best + 0.01:
+			break
+		var ok_cells := true
+		for u in grid.cells_along(stroke_start, stroke_start + dir * s, false):
+			if not grid.is_whole(u) or (grid.is_dodecagon(u) and not grid.buildable(u)):
+				ok_cells = false
+				break
+		if not ok_cells:
+			break
+		len = s
+	if len > 0.0:
+		stroke_wall = {"v": v0, "deg": stroke_deg, "len": len}
 
 
 func _stroke_to(pos: Vector2) -> void:
 	## Sample the line from the last point to pos every few pixels, so a fast drag leaves no gaps, and show the result.
-	if straight_mode:
+	if _straight_stroke():
 		_stroke_line(pick(pos))
 		stroke_last = pos
 		_stroke_show()
@@ -1309,7 +1411,18 @@ func _stroke_can_build(target: Array) -> bool:
 
 
 func _stroke_show() -> void:
-	## The preview: the translucent prism of every previewed target, as the hover ghost draws one.
+	## The preview: the translucent prism of every previewed target, as the hover ghost draws one; for a straight wall, one prism the shape of the wall.
+	if _straight_stroke():
+		if not stroke_wall.has("len"):
+			stroke_mi.visible = false
+			return
+		var wm := _prism(CSBuild.wall_poly(grid, stroke_wall), CSBuild.level_y_static(0) + 0.02, CSBuild.level_y_static(1) - 0.02, 0.0)
+		var m2 := ArrayMesh.new()
+		m2.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, wm.surface_get_arrays(0))
+		ghost_mat.albedo_color = Color(1, 1, 1, 0.38)
+		stroke_mi.mesh = m2
+		stroke_mi.visible = true
+		return
 	if stroke_cols.is_empty():
 		stroke_mi.visible = false
 		return
@@ -1325,6 +1438,7 @@ func _stroke_show() -> void:
 
 func _stroke_clear() -> void:
 	stroke_active = false
+	stroke_wall = {}
 	stroke_cols.clear()
 	stroke_targets.clear()
 	stroke_mi.visible = false
@@ -1343,7 +1457,15 @@ func _stroke_cancel(announce: bool = true) -> void:
 
 
 func _stroke_commit() -> void:
-	## The release: build every previewed target, in the order the pointer reached them, as one undo step.
+	## The release: build every previewed target, in the order the pointer reached them, as one undo step (a straight wall: the wall).
+	if _straight_stroke():
+		var wall := stroke_wall.duplicate()
+		_stroke_clear()
+		if wall.has("len"):
+			add_wall(int(wall.v), int(wall.deg), float(wall.len))
+		else:
+			flash("Nothing to build there")
+		return
 	var cols := stroke_cols.duplicate()
 	var targets := stroke_targets.duplicate()
 	var wild := stroke_wild
@@ -1371,6 +1493,9 @@ func _key(e: InputEventKey) -> void:
 		KEY_T:
 			if not ctrl:
 				set_straight(not straight_mode)
+		KEY_H:
+			if not ctrl:
+				switch_cells()
 		KEY_Z:
 			if ctrl:
 				if e.shift_pressed:

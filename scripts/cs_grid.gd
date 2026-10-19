@@ -1,26 +1,35 @@
 class_name CSGrid
 extends RefCounted
-## Castle Scaper Hex: the DOUBLE HEX GRID, "12 sides". The cells are regular dodecagons and equilateral triangles, all with the same side
-## (the truncated hexagonal tiling, 3.12.12): dodecagons sit on a triangular lattice and touch their six lattice neighbours along a
-## shared side; the gap between every three of them is a triangle. Side by side, a hexagon grid and the same grid turned by 30 degrees:
-## the sides run in 12 directions (a dodecagon's sides are 30 degrees apart; every direction occurs on both kinds of cell).
+## Castle Scaper Hex: the DOUBLE HEX GRID, "12 sides". A building cell is a regular DODECAGON: 12 sides instead of a hexagon's 6, at the SAME SIZE as
+## the regular hexagon it replaces (21.65 m2, 5.2 m across the flats, side 1.39 m). The cells are the truncated hexagonal tiling (3.12.12):
+## dodecagons sit on a triangular lattice and touch their six lattice neighbours along a whole shared side; the gap between every three of
+## them is an equilateral triangle of the same side (0.84 m2), which is too small to build on: it is kept in the grid (so every corner is still
+## shared by exactly three cells) but is not buildable, a little pit between the blocks. Two hexagon grids, one turned 30 degrees, draw
+## lines in 12 directions; the dodecagons' sides run along all of them (every direction a multiple of 30 degrees).
 ##
-## A block stands on a grid POINT and fills that point's cell. The points are the dodecagons' centres (12 neighbours each: 6 dodecagons
-## and 6 triangles, alternating) and the triangles' centres (3 neighbours: the dodecagons round it). The faces of the point graph are the
+## A block stands on a grid POINT and fills that point's cell. The points are the dodecagons' centres (12 neighbours: 6 dodecagons and 6
+## triangles, alternating) and the triangles' centres (3 neighbours: the dodecagons round it). The faces of the point graph are the
 ## triangles (D, D', T), one per cell corner, and `centers[q]` is that corner's real position, not the face's centroid. Every corner is shared
 ## by exactly three cells that are all neighbours of each other, so two blocks never touch at only a corner. The outermost ring of dodecagons
-## is sea (not buildable); a hexagon-shaped island of dodecagons and triangles stands inside it.
+## is sea (not buildable); a hexagon-shaped island stands inside it (19 rings round the middle one: the same 1141 cells as the hexagon grid).
 ##
-## (History: a random-flip hex grid, an organic jittered one, a regular hexagon grid. The seed is kept for saved towns and does nothing.)
+## (History: a random-flip hex grid, an organic jittered one, a regular hexagon grid, a dodecagon grid twice the size. The seed is kept for
+## saved towns and does nothing.)
 
-const SIDE := 2.886751345948129      # the side of every cell (m): 5 / sqrt(3), the side of the earlier regular hexagons
+const SIDE := 1.3905934          # the side of every cell (m): the dodecagon has the area of the regular hexagon of side 5 / sqrt(3) (21.65 m2)
 const TURN := 3.7320508075688772     # 2 + sqrt(3): the distance between two dodecagon centres in sides
-const D_SPACING := SIDE * TURN       # 10.77 m
-const RINGS := 8                     # dodecagon rings round the middle one: 217 dodecagons, the outer ring is the sea
-const GRID_ID := "dodeca-1"          # saved towns say which grid their column numbers belong to
+const D_SPACING := SIDE * TURN       # 5.19 m
+const RINGS := 20                    # dodecagon rings round the middle one: 1261 dodecagons, the outer ring is the sea (1141 buildable)
+const GRID_ID := "dodeca-2"          # saved towns say which grid their column numbers belong to
+const KIND_DODECA := "dodeca"        # the default: dodecagons (and unbuildable triangles between them)
+const KIND_HEX := "hex"              # the plain regular hexagon grid, also available (SPEC section 0): 1141 hexagons of 2.887 m side, 21.65 m2
+const HEX_ID := "hex-2"
 
+var kind := KIND_DODECA             # which cells: KIND_DODECA or KIND_HEX
+var side := SIDE                    # the side of every cell (m)
+var spacing := D_SPACING            # the distance between the middles of two neighbouring building cells (m)
 var step := D_SPACING               # (the size of the hash cells of the lookup)
-var radius := RINGS                 # rings of dodecagons round the middle one
+var radius := RINGS                 # rings of cells round the middle one
 var seed := 1
 var verts := PackedVector2Array()   # the points: dodecagon centres first (d_count), then triangle centres (m)
 var d_count := 0                    # how many of the points are dodecagon centres
@@ -44,14 +53,33 @@ func mid(a: int, b: int) -> Vector2:
 	return _mid.get(edge_key(a, b), (verts[a] + verts[b]) * 0.5)
 
 
+static func id_of(k: String) -> String:
+	## The tag a saved town carries for the cells of kind k.
+	return HEX_ID if k == KIND_HEX else GRID_ID
+
+
+static func kind_of(id: String) -> String:
+	## The kind of cells a tag names, or "" for a tag of another grid.
+	if id == HEX_ID:
+		return KIND_HEX
+	return KIND_DODECA if id == GRID_ID else ""
+
+
 func is_dodecagon(v: int) -> bool:
+	## A building cell (a dodecagon, or any cell of the plain hexagon grid), not one of the little triangles.
 	return v < d_count
 
 
-func generate(p_seed: int = 1, p_radius: int = RINGS, _p_step: float = 0.0) -> void:
+func generate(p_seed: int = 1, p_radius: int = RINGS, p_kind: String = KIND_DODECA) -> void:
 	seed = p_seed
-	radius = clampi(p_radius, 2, 20)
+	radius = clampi(p_radius, 2, 24)
+	kind = p_kind
 	var n := radius
+	if kind == KIND_HEX:
+		_generate_hex(n)
+		return
+	side = SIDE
+	spacing = D_SPACING
 	var e1 := Vector2(1.0, 0.0)
 	var e2 := Vector2(0.5, sqrt(3.0) * 0.5)
 	var inside := func(a: int, b: int) -> bool:
@@ -86,6 +114,36 @@ func generate(p_seed: int = 1, p_radius: int = RINGS, _p_step: float = 0.0) -> v
 	_build_topology()
 
 
+func _generate_hex(n: int) -> void:
+	## The regular hexagon grid: a triangle lattice of 5 m cut to a hexagon of n rings, a cell round every point (the centroids of the six
+	## triangles round it): regular hexagons of 2.887 m side, pointy-top.
+	side = 5.0 / sqrt(3.0)
+	spacing = 5.0
+	var e1 := Vector2(1.0, 0.0)
+	var e2 := Vector2(0.5, sqrt(3.0) * 0.5)
+	var inside := func(a: int, b: int) -> bool:
+		return absi(a) <= n and absi(b) <= n and absi(a + b) <= n
+	var vid := {}
+	verts.resize(0)
+	border.resize(0)
+	for a in range(-n, n + 1):
+		for b in range(-n, n + 1):
+			if inside.call(a, b):
+				vid[Vector2i(a, b)] = verts.size()
+				verts.append((e1 * float(a) + e2 * float(b)) * spacing)
+				border.append(1 if (absi(a) == n or absi(b) == n or absi(a + b) == n) else 0)
+	d_count = verts.size()
+	var qs := PackedInt32Array()
+	for a in range(-n, n + 1):
+		for b in range(-n, n + 1):
+			if inside.call(a, b) and inside.call(a + 1, b) and inside.call(a, b + 1):
+				qs.append_array([vid[Vector2i(a, b)], vid[Vector2i(a + 1, b)], vid[Vector2i(a, b + 1)]])
+			if inside.call(a + 1, b) and inside.call(a + 1, b + 1) and inside.call(a, b + 1):
+				qs.append_array([vid[Vector2i(a + 1, b)], vid[Vector2i(a + 1, b + 1)], vid[Vector2i(a, b + 1)]])
+	tris = qs
+	_build_topology()
+
+
 func _build_topology() -> void:
 	var nv := verts.size()
 	var nq := tris.size() / 3
@@ -98,10 +156,13 @@ func _build_topology() -> void:
 	for q in nq:
 		# the cell corner of face (dodecagon, dodecagon, triangle): on the shared side of the two dodecagons, half a side from its
 		# middle towards the triangle (the other end of that side is the corner of the face on the triangle's other flank)
-		var da := verts[tris[q * 3]]
-		var db := verts[tris[q * 3 + 1]]
-		var mid_ab := (da + db) * 0.5
-		centers[q] = mid_ab + (verts[tris[q * 3 + 2]] - mid_ab).normalized() * (SIDE * 0.5)
+		if kind == KIND_HEX:
+			centers[q] = (verts[tris[q * 3]] + verts[tris[q * 3 + 1]] + verts[tris[q * 3 + 2]]) / 3.0
+		else:
+			var da := verts[tris[q * 3]]
+			var db := verts[tris[q * 3 + 1]]
+			var mid_ab := (da + db) * 0.5
+			centers[q] = mid_ab + (verts[tris[q * 3 + 2]] - mid_ab).normalized() * (SIDE * 0.5)
 		for k in 3:
 			var v := tris[q * 3 + k]
 			var nx := tris[q * 3 + (k + 1) % 3]
@@ -149,7 +210,8 @@ func _build_topology() -> void:
 # --- queries ---------------------------------------------------------------------------------------
 
 func buildable(v: int) -> bool:
-	if v < 0 or v >= verts.size() or border[v]:
+	## A dodecagon with a full ring of faces, not on the sea ring. The triangles between them are too small to build on.
+	if v < 0 or v >= d_count or border[v]:
 		return false
 	for q in rings[v]:
 		if q < 0:
@@ -215,6 +277,35 @@ func cells_along(a: Vector2, b: Vector2, only_buildable: bool = true) -> PackedI
 	for f: Array in found:
 		out.append(int(f[1]))
 	return out
+
+
+func is_whole(v: int) -> bool:
+	## A point whose cell is a whole polygon, off the sea ring (a dodecagon or a triangle).
+	if v < 0 or v >= verts.size() or border[v]:
+		return false
+	for q in rings[v]:
+		if q < 0:
+			return false
+	return true
+
+
+func line_stops(a: Vector2, dir: Vector2, max_len: float) -> PackedFloat32Array:
+	## Where along the line from a (the middle of a cell) a straight wall may end: the distances, nearest first, at which the middle of a whole cell
+	## (a dodecagon or a triangle) lies exactly on the line. A wall ending at the middle of a cell keeps its end face clear of the cell's
+	## sides and corners. Along the lines through a row of dodecagons that is every D_SPACING; along the 30 degree lines (they run along the
+	## sides between two rows) the triangles' middles and the second neighbours' come in between.
+	var out := PackedFloat32Array()
+	var d := dir.normalized()
+	for v in cells_along(a, a + d * max_len, false):
+		if not is_whole(v):
+			continue
+		var r := verts[v] - a
+		var s := r.dot(d)
+		if s > 0.5 and absf(r.cross(d)) < 0.02:
+			out.append(s)
+	var arr := Array(out)
+	arr.sort()
+	return PackedFloat32Array(arr)
 
 
 func _enter(v: int, a: Vector2, b: Vector2) -> float:

@@ -343,7 +343,7 @@ func _fix_openings() -> void:
 		var bx: Box
 		match str(op.kind):
 			"door":
-				bx = box(o, bas, Vector3(-0.62, 0.0, 0.0), Vector3(0.62, h + 0.06, 1.0))
+				bx = box(o, bas, Vector3(-CSBuild.DOOR_HW - 0.03, 0.0, 0.0), Vector3(CSBuild.DOOR_HW + 0.03, h + 0.06, 1.0))
 			"window":
 				bx = box(o, bas, Vector3(-0.34, 0.0, 0.0), Vector3(0.34, h, 0.35))
 			_:
@@ -412,7 +412,7 @@ func _doors() -> void:
 		for side: float in [first, -first]:
 			if side != first and CSBuild.h01(slot, k, 82) > 0.35:
 				continue
-			var m := _mount(op, side * 0.95)
+			var m := _mount(op, side * 0.62)
 			var q: Vector2 = m[0]
 			var o := Vector3(q.x, float(op.y0) + 2.05, q.y)
 			var bas := wall_basis(m[1])
@@ -435,7 +435,7 @@ func _tower_spots(v: int, k: int, odd: bool) -> Array:
 			out.append([p + d * r, d, s])
 		return out
 	for sd: Array in _sides(v, k):
-		if float(sd[3]) >= 1.4:
+		if float(sd[3]) >= 1.2:
 			out.append([sd[1], sd[2], int(sd[0])])
 	return out
 
@@ -464,7 +464,7 @@ func _towers() -> void:
 					sh.group = "shield %d" % kk
 					sh.boxes = [box(o, bas, Vector3(-0.3, -0.42, 0.0), Vector3(0.3, 0.38, 0.13))]
 					sh.inst = [[M_SHIELD, Transform3D(bas, o), int(ha[0]), int(ha[1])]]
-			if k == tk and CSBuild.h01(v, 55) < 1.01:
+			if k == tk and CSBuild.h01(v, 55) < 0.65:
 				var hb: Array = HERALDRY[int(CSBuild.h01(v, k, 57) * float(HERALDRY.size())) % HERALDRY.size()]
 				for m: Array in _tower_spots(v, k, not odd):
 					var q: Vector2 = m[0]
@@ -613,23 +613,23 @@ func _walks() -> void:
 		for sd: Array in _sides(v, k):
 			var i: int = sd[0]
 			var len: float = sd[3]
-			if len < 2.2:
+			if len < 1.3:
 				continue
 			var roll := CSBuild.h01(v * 16 + i, k, 63)
 			var mid: Vector2 = sd[1]
 			var bas := wall_basis(sd[2])
 			var o := Vector3(mid.x, y, mid.y)
 			if roll < 0.24:
-				var w := minf(len - 0.8, 3.4)
-				if w < 1.4:
+				var w := minf(len - 0.3, 3.4)
+				if w < 1.0:
 					continue
 				var s := w / 2.0
 				var hc := _cand(HOARDING, 4.0, CSBuild.h01(v * 16 + i, k, 64), v, kk)
 				hc.boxes = [box(o, bas, Vector3(-1.08 * s, -1.25, 0.0), Vector3(1.08 * s, 1.0, 0.96))]
 				hc.inst = [[M_HOARDING, Transform3D(Basis(bas.x * s, bas.y, bas.z), o), wall, wall]]
 			elif roll < 0.55:
-				var w := minf(len - 0.6, 3.8)
-				if w < 1.0:
+				var w := minf(len - 0.3, 3.8)
+				if w < 0.8:
 					continue
 				var cc := _cand(CORBELS, 4.0, CSBuild.h01(v * 16 + i, k, 64), v, kk)
 				cc.boxes = [box(o, bas, Vector3(-w * 0.5, -0.6, 0.0), Vector3(w * 0.5, 0.0, 0.33))]
@@ -683,11 +683,11 @@ func _courts() -> void:
 			var f0 := ol[(j + n - 1) % n]
 			var f1 := ol[j]
 			var len := f0.distance_to(f1)
-			if len < 1.8:
+			if len < 1.2:
 				continue
 			var along := (f1 - f0) / len
 			var out := Vector2(along.y, -along.x)
-			# a side of 2.9 m (every side of the double hex grid) holds one spot in the middle, a longer one two
+			# a side of 1.39 m (every side of the double grid) holds one spot in the middle, a longer one two
 			var wide := len >= 4.0
 			for si in 2 if wide else 1:
 				var slot := u * 32 + i * 2 + si
@@ -730,7 +730,7 @@ func _ornaments() -> void:
 			for sd: Array in _sides(v, k):
 				var i: int = sd[0]
 				var len: float = sd[3]
-				if len < 1.8:
+				if len < 1.2:
 					continue
 				var mid: Vector2 = sd[1]
 				var bas := wall_basis(sd[2])
@@ -742,11 +742,11 @@ func _ornaments() -> void:
 					sc.boxes = [box(o, bas, Vector3(-w * 0.5, 0.0, 0.0), Vector3(w * 0.5, 0.12, 0.1))]
 					sc.inst = [[M_STRING, Transform3D(Basis(bas.x * w, bas.y, bas.z), o), wall, wall]]
 				if sty != CSStyle.APARTMENT and CSBuild.h01(slot, k, 93) < (0.34 if k <= 1 else 0.12):
-					var iw := minf(len - 0.7, 1.6 + 1.4 * CSBuild.h01(slot, k, 94))
-					if iw < 1.0:
+					var iw := minf(len - 0.45, 0.8 + 0.6 * CSBuild.h01(slot, k, 94))
+					if iw < 0.6:
 						continue
 					var ih := 2.0 + 1.6 * CSBuild.h01(slot, k, 95)
-					var dx := (len - 0.7 - iw) * (CSBuild.h01(slot, k, 96) - 0.5)
+					var dx := (len - 0.45 - iw) * (CSBuild.h01(slot, k, 96) - 0.5)
 					var o2 := Vector3(mid.x, y0 + 0.2, mid.y) + bas.x * dx
 					var iv := _cand(IVY, 8.0, CSBuild.h01(slot, k, 97), v, CSTown.key(v, k))
 					iv.boxes = [box(o2, bas, Vector3(-iw * 0.5, 0.0, 0.0), Vector3(iw * 0.5, ih, 0.14))]

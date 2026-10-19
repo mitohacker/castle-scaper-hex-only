@@ -148,12 +148,12 @@ func _sea_pair(wild: bool) -> Array:
 
 
 func _straight_plan() -> Dictionary:
-	## A free cell on the sea in view and a grid direction (a multiple of 30 degrees) along which a row of at least four free cells
-	## lies in view: {v0, deg, len, p0 (screen, the cell's middle), p1 (screen, a point a few degrees off the line), cells (what the
-	## row holds)}. Empty if none.
+	## A free cell on the sea in view and a grid heading (a multiple of 30 degrees) along which a wall of three stops (the middles of cells it may
+	## end at) lies over free sea in view: {v0, deg, len (the wall's length), p0 (screen, the cell's middle), p1 (screen, the end, nudged a few
+	## degrees off the line)}. Empty if none.
 	var grid: CSGrid = main.grid
 	var town: CSTown = main.town
-	for v in grid.verts.size():
+	for v in grid.d_count:
 		if not grid.buildable(v) or town.top(v) >= 0 or town.has_wild(v):
 			continue
 		var d := grid.verts[v].length()
@@ -167,28 +167,38 @@ func _straight_plan() -> Dictionary:
 		if not _safe(pa):
 			continue
 		var pk: Dictionary = main.pick(pa)
-		if (pk.add as Array).is_empty() or int((pk.add as Array)[0]) != v:
+		if (pk.add as Array).size() != 2 or int((pk.add as Array)[0]) != v or int((pk.add as Array)[1]) != 0:
 			continue
 		for deg in range(0, 360, 30):
 			var dir := Vector2.from_angle(deg_to_rad(float(deg)))
-			var len := 17.0
-			var b := a + dir * len
-			var off := a + (dir * len).rotated(deg_to_rad(7.0))
+			var stops := grid.line_stops(a, dir, 40.0)
+			if stops.size() < 3:
+				continue
+			var len := float(stops[2])
+			var end := a + dir * len
+			var off := a + (dir * len).rotated(deg_to_rad(5.0))
 			var pb := _screen(Vector3(off.x, 0.0, off.y))
-			if not _safe(pb) or (main.cam as Camera3D).is_position_behind(Vector3(off.x, 0.0, off.y)) or pa.distance_to(pb) < 150.0:
+			if not _safe(pb) or (main.cam as Camera3D).is_position_behind(Vector3(off.x, 0.0, off.y)) or pa.distance_to(pb) < 100.0:
 				continue
 			var hit: Dictionary = main.pick(pb)
 			var hp: Vector3 = hit.point
 			var dd := Vector2(hp.x, hp.z) - a
 			if hit.point == Vector3.ZERO or CSGrid.snap_direction(dd).angle_to(dir) > 0.01:
 				continue
-			var row := grid.cells_along(a, a + dir * maxf(dd.dot(dir), 0.0))
-			var free := row.size() >= 4
-			for c: int in row:
-				if town.top(c) >= 0 or town.has_wild(c):
+			# the nearest place a wall may end to where the pointer's shadow falls on the line must be the third stop
+			var along := dd.dot(dir)
+			var nearest := 0.0
+			for s: float in stops:
+				if absf(s - along) < absf(nearest - along):
+					nearest = s
+			if absf(nearest - len) > 0.01:
+				continue
+			var free := true
+			for c: int in grid.cells_along(a, end, false):
+				if not grid.is_whole(c) or town.top(c) >= 0 or town.has_wild(c) or (grid.is_dodecagon(c) and not grid.buildable(c)):
 					free = false
 			if free:
-				return {"v0": v, "deg": deg, "len": maxf(dd.dot(dir), 0.0), "p0": pa, "p1": pb, "cells": row}
+				return {"v0": v, "deg": deg, "len": len, "p0": pa, "p1": pb}
 	return {}
 
 
@@ -392,9 +402,10 @@ func _run() -> void:
 		await _key(KEY_Z, true)
 		await _settle()
 		ok(town.size() == n2, "and Ctrl+Z takes it back")
-	# STRAIGHT WALLS: the button next to the build types (and the T key) turn it on; a drag then previews a straight row from the cell
-	# pressed on, along the grid direction (a multiple of 30 degrees) nearest to the pointer, so the wall lies on a grid line; it follows
-	# the pointer, builds only at the release as ONE undo step, Esc or the right button cancels, and a click still builds one block
+	# STRAIGHT WALLS: the button next to the build types (and the T key) turn it on; a drag then previews ONE straight wall from the middle of the
+	# cell pressed on, along the grid direction (a multiple of 30 degrees) nearest to the pointer, ending at the middle of a cell, so it always lies
+	# on a grid line; it follows the pointer, builds only at the release as ONE undo step (the wall's every point on four parallel lines), Esc or
+	# the right button cancels, a right-click takes the wall away, and a click still builds one block
 	var sb: Button = main.ui.b_straight
 	ok(sb != null and sb.is_visible_in_tree() and not main.straight_mode and not sb.button_pressed, "a Straight wall button sits with the build types, off to begin with")
 	await _click(sb.get_global_rect().get_center())
@@ -404,12 +415,13 @@ func _run() -> void:
 	await _key(KEY_T, false)
 	ok(main.straight_mode and sb.button_pressed, "and on")
 	var swp := _straight_plan()
-	ok(not swp.is_empty(), "found a free row of cells on the sea along a grid direction to drag a wall over")
+	ok(not swp.is_empty(), "found a free stretch of sea along a grid direction to drag a wall over")
 	if not swp.is_empty():
 		var v0: int = swp.v0
 		var p0: Vector2 = swp.p0
 		var p1: Vector2 = swp.p1
-		var want: Array = swp.cells
+		var a0: Vector2 = grid.verts[v0]
+		var dir0 := Vector2.from_angle(deg_to_rad(float(swp.deg)))
 		var n3 := town.size()
 		var hist3: int = main.history.size()
 		var mvs := InputEventMouseMotion.new()
@@ -418,64 +430,99 @@ func _run() -> void:
 		root.push_input(mvs)
 		await _button(MOUSE_BUTTON_LEFT, true, p0)
 		await _move_along(MOUSE_BUTTON_LEFT, _path([p0, p1]))
-		var got: Array = main.stroke_cols.duplicate()
-		var gs := got.duplicate()
-		gs.sort()
-		var ws := want.duplicate()
-		ws.sort()
-		ok(main.stroke_active and got.size() >= 4 and gs == ws, "a straight drag previews the cells of the row from the press to the pointer (%d of %d expected)" % [got.size(), want.size()])
-		ok(posmod(main.stroke_deg, 360) == int(swp.deg), "snapped to the grid direction nearest the pointer, %d degrees although the pointer is a few degrees off it (%d)" % [int(swp.deg), main.stroke_deg])
-		ok(got.has(v0) and (main.stroke_mi.mesh as ArrayMesh).get_surface_count() == got.size() and (main.stroke_mi as MeshInstance3D).visible,
-			"the ghost shows the whole row, the cell pressed on included")
-		var on_line := true
-		var a2: Vector2 = grid.verts[v0]
-		var b2: Vector2 = a2 + Vector2.from_angle(deg_to_rad(float(swp.deg))) * float(swp.len)
-		for i in 41:
-			var q := a2.lerp(b2, float(i) / 40.0)
-			var inside := false
-			for col2: int in got:
-				var pg: PackedVector2Array = grid.dual(col2)
-				if Geometry2D.is_point_in_polygon(q, pg):
-					inside = true
-				else:
-					for e in pg.size():
-						if Geometry2D.get_closest_point_to_segment(q, pg[e], pg[(e + 1) % pg.size()]).distance_to(q) < 0.06:
-							inside = true
-			if not inside:
-				on_line = false
-		ok(on_line, "the row covers its grid line from end to end")
-		ok(town.size() == n3 and main.history.size() == hist3, "nothing is built while the button is down")
+		var wl: Dictionary = main.stroke_wall
+		ok(main.stroke_active and wl.has("len") and int(wl.v) == v0 and int(wl.deg) == int(swp.deg) and absf(float(wl.len) - float(swp.len)) < 0.01,
+			"a straight drag previews one wall from the cell pressed on, snapped to %d degrees although the pointer is a few degrees off it, %.2f m long (%s)" % [int(swp.deg), float(swp.len), str(wl)])
+		ok(posmod(main.stroke_deg, 360) == int(swp.deg) and (main.stroke_mi as MeshInstance3D).visible and (main.stroke_mi.mesh as ArrayMesh).get_surface_count() == 1,
+			"the ghost is one prism, not a row of cells")
+		var gv: PackedVector3Array = (main.stroke_mi.mesh as ArrayMesh).surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+		var ghost_off := 0.0
+		for q: Vector3 in gv:
+			ghost_off = maxf(ghost_off, absf((Vector2(q.x, q.z) - a0).cross(dir0)))
+		ok(ghost_off < CSBuild.WALL_THICK * 0.5 + 0.01, "every point of the ghost lies within the wall's width of its grid line (%.3f m off)" % ghost_off)
+		ok(town.walls.is_empty() and town.size() == n3 and main.history.size() == hist3, "nothing is built while the button is down")
 		ok(main.status_msg.begins_with("Straight wall at "), "the in-game cue says what the straight drag will do (%s)" % main.status_msg)
-		# the pointer coming back shortens it; going another way swings it round to that direction
+		# the pointer coming back shortens it; going round swings it to another grid direction
 		await _move_along(MOUSE_BUTTON_LEFT, _path([p1, p0.lerp(p1, 0.5)]))
-		ok(main.stroke_cols.size() < got.size() and main.stroke_cols.size() >= 1 and posmod(main.stroke_deg, 360) == int(swp.deg),
-			"moving the pointer back shortens the preview (%d -> %d)" % [got.size(), main.stroke_cols.size()])
-		var other := _screen(Vector3(a2.x, 0.0, a2.y) + Vector3(Vector2.from_angle(deg_to_rad(float(swp.deg) + 90.0)).x, 0.0, Vector2.from_angle(deg_to_rad(float(swp.deg) + 90.0)).y) * 9.0)
+		var shorter: Dictionary = main.stroke_wall
+		ok(shorter.has("len") and float(shorter.len) < float(swp.len) - 0.5 and int(shorter.deg) == int(swp.deg), "moving the pointer back shortens the wall (%.2f -> %.2f m)" % [float(swp.len), float(shorter.get("len", 0.0))])
+		var side := Vector2(-dir0.y, dir0.x)
+		var other := _screen(Vector3(a0.x + side.x * 12.0, 0.0, a0.y + side.y * 12.0))
 		await _move_along(MOUSE_BUTTON_LEFT, _path([p0.lerp(p1, 0.5), other]))
-		ok(posmod(main.stroke_deg, 360) != int(swp.deg) and absi(posmod(main.stroke_deg - int(swp.deg), 360) - 90) <= 30, "and turning the pointer to another side swings it to the grid direction there (%d deg)" % main.stroke_deg)
+		var turned: Dictionary = main.stroke_wall
+		ok(turned.has("len") and absi(posmod(int(turned.deg) - int(swp.deg), 360) - 90) <= 30 and posmod(int(turned.deg), 30) == 0,
+			"turning the pointer to another side swings the wall to the grid direction there (%s)" % str(turned))
 		await _move_along(MOUSE_BUTTON_LEFT, _path([other, p1]))
-		ok(posmod(main.stroke_deg, 360) == int(swp.deg) and main.stroke_cols.size() == got.size() and town.size() == n3, "back on the first direction it is the same row again, still unbuilt")
+		ok(int(main.stroke_wall.get("deg", -1)) == int(swp.deg) and absf(float(main.stroke_wall.get("len", 0.0)) - float(swp.len)) < 0.01 and town.walls.is_empty(),
+			"back on the first direction it is the same wall again, still unbuilt")
 		await _button(MOUSE_BUTTON_LEFT, false, p1)
 		await _settle()
 		ok(not main.stroke_active and not (main.stroke_mi as MeshInstance3D).visible, "the release ends the stroke and hides the preview")
-		var built := true
-		for col3: int in got:
-			if town.top(col3) < 0:
-				built = false
-		ok(built and town.size() == n3 + got.size(), "the release builds exactly the previewed row (%d blocks)" % (town.size() - n3))
+		ok(town.walls.size() == 1 and int(town.walls[0].v) == v0 and int(town.walls[0].deg) == int(swp.deg) and absf(float(town.walls[0].len) - float(swp.len)) < 0.01 and town.size() == n3,
+			"the release builds exactly the previewed wall, and no block")
 		ok(main.history.size() == hist3 + 1, "the whole wall is one undo step (%d new)" % (main.history.size() - hist3))
+		# straight: every point of the wall's mesh lies on one of four parallel lines (its two faces and the parapet's two inner faces), from its start to its end
+		var wm: CFMesh = main.build.mesh
+		var owner := CSBuild.WALL_OWNER + 1
+		var lines_ok := true
+		var along_lo := INF
+		var along_hi := -INF
+		var perp_lo := INF
+		var perp_hi := -INF
+		var wall_verts := 0
+		var half := CSBuild.WALL_THICK * 0.5
+		var offs := [-half, -(half - CSBuild.PT), half - CSBuild.PT, half]
+		for tri in wm.verts.size() / 3:
+			if int(wm.cust1[tri * 12 + 3]) != owner:
+				continue
+			for k in 3:
+				var q := wm.verts[tri * 3 + k]
+				var r := Vector2(q.x, q.z) - a0
+				var perp := r.cross(dir0)
+				var al := r.dot(dir0)
+				wall_verts += 1
+				along_lo = minf(along_lo, al)
+				along_hi = maxf(along_hi, al)
+				perp_lo = minf(perp_lo, perp)
+				perp_hi = maxf(perp_hi, perp)
+				var near_line := false
+				for o: float in offs:
+					if absf(perp - o) < 0.012:
+						near_line = true
+				# a vertex on an end face (the parapet's corners, the notches' ends) is across the wall: its along value is the end's
+				# (the end parapets are across the wall: their crenel's corners are at their inner face, 0.3 m from the end)
+				if not near_line and not ((al < CSBuild.PT + 0.012 or al > float(swp.len) - CSBuild.PT - 0.012) and absf(perp) < half + 0.012):
+					lines_ok = false
+		ok(wall_verts > 100 and lines_ok, "straight: every point of the built wall lies on one of its four parallel lines, within 1.2 cm (%d vertices)" % wall_verts)
+		ok(absf(perp_lo + half) < 0.012 and absf(perp_hi - half) < 0.012 and absf(along_lo) < 0.012 and absf(along_hi - float(swp.len)) < 0.012,
+			"and it is %.2f m thick and %.2f m long (%.3f .. %.3f across, %.3f .. %.3f along)" % [CSBuild.WALL_THICK, float(swp.len), perp_lo, perp_hi, along_lo, along_hi])
+		# a right-click on the wall takes it away (one undo step), and Ctrl+Z puts it back
+		var wp := Vector3(a0.x + dir0.x * float(swp.len) * 0.5, CSBuild.level_y_static(0) + 2.0, a0.y + dir0.y * float(swp.len) * 0.5)
+		var pick_w: Dictionary = main.pick(_screen(wp))
+		ok(int(pick_w.get("wall", -1)) == 0, "a click on the wall picks it (wall %d)" % int(pick_w.get("wall", -1)))
+		await _click(_screen(wp), MOUSE_BUTTON_RIGHT)
+		await _settle()
+		ok(town.walls.is_empty() and main.history.size() == hist3 + 2, "a right-click takes the wall away, as one undo step")
 		await _key(KEY_Z, true)
 		await _settle()
-		ok(town.size() == n3, "one Ctrl+Z takes the whole wall back (%d blocks)" % town.size())
+		ok(town.walls.size() == 1, "Ctrl+Z puts it back")
+		await _key(KEY_Z, true)
+		await _settle()
+		ok(town.walls.is_empty() and town.size() == n3 and main.history.size() == hist3, "one more Ctrl+Z takes the whole wall back")
+		await _key(KEY_Y, true)
+		await _settle()
+		ok(town.walls.size() == 1, "Ctrl+Y builds it again")
+		await _key(KEY_Z, true)
+		await _settle()
 		# Esc and the right button cancel
 		await _button(MOUSE_BUTTON_LEFT, true, p0)
 		await _move_along(MOUSE_BUTTON_LEFT, _path([p0, p1]))
-		var was: bool = main.stroke_active and main.stroke_cols.size() >= 4
+		var was: bool = main.stroke_active and main.stroke_wall.has("len")
 		await _key(KEY_ESCAPE, false)
 		ok(was and not main.stroke_active and not (main.stroke_mi as MeshInstance3D).visible, "Esc cancels a straight drag and hides the preview")
 		await _button(MOUSE_BUTTON_LEFT, false, p1)
 		await _settle()
-		ok(town.size() == n3 and main.history.size() == hist3, "and the release after it builds nothing")
+		ok(town.walls.is_empty() and town.size() == n3 and main.history.size() == hist3, "and the release after it builds nothing")
 		await _button(MOUSE_BUTTON_LEFT, true, p0)
 		await _move_along(MOUSE_BUTTON_LEFT, _path([p0, p1]))
 		await _button(MOUSE_BUTTON_RIGHT, true, p1)
@@ -483,11 +530,11 @@ func _run() -> void:
 		await _button(MOUSE_BUTTON_RIGHT, false, p1)
 		await _button(MOUSE_BUTTON_LEFT, false, p1)
 		await _settle()
-		ok(town.size() == n3 and main.history.size() == hist3, "with nothing built")
+		ok(town.walls.is_empty() and town.size() == n3 and main.history.size() == hist3, "with nothing built")
 		# a plain click still builds one block
 		await _click(p0)
 		await _settle()
-		ok(town.size() == n3 + 1 and main.history.size() == hist3 + 1 and town.top(v0) >= 0 and not main.stroke_active, "a plain click with straight walls on builds one block")
+		ok(town.size() == n3 + 1 and town.walls.is_empty() and main.history.size() == hist3 + 1 and town.top(v0) >= 0 and not main.stroke_active, "a plain click with straight walls on builds one block")
 		await _key(KEY_Z, true)
 		await _settle()
 		ok(town.size() == n3, "and Ctrl+Z takes it back")
@@ -498,11 +545,11 @@ func _run() -> void:
 		var n4 := town.size()
 		await _button(MOUSE_BUTTON_LEFT, true, swp.p0)
 		await _move_along(MOUSE_BUTTON_LEFT, _path([swp.p0, swp.p1]))
-		ok(main.stroke_active and main.stroke_cols.size() >= 2 and main.status_msg.begins_with("Drag preview"), "with it off a drag is the ordinary paint preview again")
+		ok(main.stroke_active and main.stroke_cols.size() >= 2 and main.status_msg.begins_with("Drag preview") and main.stroke_wall.is_empty(), "with it off a drag is the ordinary paint preview again")
 		await _key(KEY_ESCAPE, false)
 		await _button(MOUSE_BUTTON_LEFT, false, swp.p1)
 		await _settle()
-		ok(town.size() == n4, "(cancelled)")
+		ok(town.size() == n4 and town.walls.is_empty(), "(cancelled)")
 	var goal_m: Vector3 = main.cam_goal
 	var nm := town.size()
 	await _drag(MOUSE_BUTTON_MIDDLE, _path([Vector2(vs.x * 0.5, vs.y * 0.5), Vector2(vs.x * 0.5 + 72.0, vs.y * 0.5)]))
@@ -764,6 +811,24 @@ func _run() -> void:
 	ctrl_e.pressed = false
 	Input.parse_input_event(ctrl_e)
 	ok((main.cam_goal as Vector3).distance_to(g4) < 0.01, "with Ctrl held (Ctrl+S saves) W does not move the view")
+	# the Cells switch: H (or the Cells button) asks, a second press within five seconds switches to the plain hexagon grid (a new empty sea) and back
+	await _settle()
+	var cb: Button = main.ui.b_cells
+	ok(cb != null and cb.is_visible_in_tree() and main.grid.kind == CSGrid.KIND_DODECA and cb.text.contains("12"), "a Cells button shows the 12-sided cells (%s)" % cb.text)
+	var blocks_before := town.size()
+	await _key(KEY_H, false)
+	ok(main.grid.kind == CSGrid.KIND_DODECA and town.size() == blocks_before, "the first press of H only asks")
+	await _key(KEY_H, false)
+	await _settle()
+	ok(main.grid.kind == CSGrid.KIND_HEX and main.town.grid_kind == CSGrid.KIND_HEX and main.town.size() == 0 and cb.text.contains("6"), "the second press switches to the hexagon grid and starts an empty sea (%s)" % cb.text)
+	var hv: int = main.grid.nearest(Vector2.ZERO)
+	await _click(_screen(Vector3(main.grid.verts[hv].x, 0.0, main.grid.verts[hv].y)))
+	await _settle()
+	ok(main.town.has(hv, 0) and (main.grid.nbrs[hv] as PackedInt32Array).size() == 6, "a click builds a block on a hexagon")
+	await _click(cb.get_global_rect().get_center())
+	await _click(cb.get_global_rect().get_center())
+	await _settle()
+	ok(main.grid.kind == CSGrid.KIND_DODECA and main.town.grid_kind == CSGrid.KIND_DODECA and main.town.size() == 0, "the Cells button switches back to the 12-sided cells")
 	_end()
 
 

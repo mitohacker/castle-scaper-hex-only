@@ -17,8 +17,13 @@ var blocks := {}            # v * 64 + k -> style * 16 + colour index (the castl
 ## "t": tree levels 0..3, "d": 1 when a road runs through it}. A column of the landscape and a castle block never share a grid point,
 ## except that a courtyard (castle land with no block) can take land, trees and a road.
 var wild := {}
+## Straight walls: each is one continuous straight wall of fixed thickness (CSBuild.WALL_THICK) laid along a grid direction, from the middle of
+## the cell it began on, `len` metres long, ending at the middle of a cell: {"v": the cell, "deg": the heading (a multiple of 30, 0..330), "len": m,
+## "c": colour}. They are walls of their own, not chains of cells: a wall cuts across the cells it passes through.
+var walls: Array = []
 var grid_seed := 1
 var grid_radius := CSGrid.RINGS
+var grid_kind := CSGrid.KIND_DODECA   # which cells the column numbers belong to (CSGrid.KIND_*)
 var name := "Untitled"
 
 
@@ -80,6 +85,26 @@ func columns() -> Array:
 func clear() -> void:
 	blocks.clear()
 	wild.clear()
+	walls.clear()
+
+
+func wall_add(v: int, deg: int, length: float, c: int) -> bool:
+	## A straight wall from the middle of cell v; false for a wall of no length or one that is there already.
+	deg = posmod(deg, 360)
+	if length < 1.0:
+		return false
+	for w: Dictionary in walls:
+		if int(w.v) == v and int(w.deg) == deg and absf(float(w.len) - length) < 0.01:
+			return false
+	walls.append({"v": v, "deg": deg, "len": length, "c": clampi(c, 0, COLOURS - 1)})
+	return true
+
+
+func wall_remove(i: int) -> bool:
+	if i < 0 or i >= walls.size():
+		return false
+	walls.remove_at(i)
+	return true
 
 
 func size() -> int:
@@ -193,7 +218,10 @@ func to_dict() -> Dictionary:
 	for v: int in wild_columns():
 		var r: Dictionary = wild[v]
 		wl.append([v, int(r.get("l", 0)), str(r.get("h", "")), int(r.get("t", 0)), int(r.get("d", 0))])
-	return {"name": name, "grid": CSGrid.GRID_ID, "grid_seed": grid_seed, "grid_radius": grid_radius, "blocks": list, "wild": wl}
+	var wa := []
+	for w: Dictionary in walls:
+		wa.append([int(w.v), int(w.deg), float(w.len), int(w.c)])
+	return {"name": name, "grid": CSGrid.id_of(grid_kind), "grid_seed": grid_seed, "grid_radius": grid_radius, "blocks": list, "wild": wl, "walls": wa}
 
 
 func from_dict(d: Dictionary) -> void:
@@ -202,14 +230,19 @@ func from_dict(d: Dictionary) -> void:
 	grid_seed = int(d.get("grid_seed", 1))
 	grid_radius = int(d.get("grid_radius", CSGrid.RINGS))
 	wild.clear()
-	if str(d.get("grid", "")) != CSGrid.GRID_ID:
+	walls.clear()
+	var k := CSGrid.kind_of(str(d.get("grid", "")))
+	if k == "":
 		# a town saved on another grid: its column numbers mean other cells here, so it opens as an empty sea
 		grid_radius = CSGrid.RINGS
 		return
+	grid_kind = k
 	for b in d.get("blocks", []):
 		blocks[int(b[0]) * 64 + int(b[1])] = int(b[2])
 	for w in d.get("wild", []):
 		wild[int(w[0])] = {"l": int(w[1]), "h": str(w[2]), "t": int(w[3]), "d": int(w[4])}
+	for w in d.get("walls", []):
+		walls.append({"v": int(w[0]), "deg": int(w[1]), "len": float(w[2]), "c": int(w[3])})
 
 
 func duplicate_town() -> CSTown:

@@ -1,8 +1,8 @@
 extends SceneTree
-## What the cells of the double hex grid look like: how many sides (12 for the dodecagons, 3 for the triangles between them), which way
-## round, how long the sides are, how elongated, which directions the sides run in (6 orientations = 12 headings, multiples of 30 degrees), and how many
-## cells there are of each kind (the building styles size roofs from this).
-## Expected: 169 dodecagons + 384 triangles buildable, every side 2.887 m, corners 150 / 60 degrees, no concave cell.
+## What the cells of the double hex grid look like: the 1141 building cells (regular dodecagons: 12 sides, 21.65 m2, side 1.39 m), which way round,
+## how long the sides are, how elongated, which directions the sides run in (6 orientations = 12 headings, multiples of 30 degrees), and how many
+## of each kind of cell the grid holds (the little triangles between the dodecagons are in the grid but not buildable). `--grid=hex` the plain
+## hexagon grid instead. Expected: 1141 cells of 12 sides, every side 1.391 m, corners 150 degrees, area 21.65 m2, no concave cell.
 ## Run: Godot --headless --path . --script res://tools/grid_probe.gd [-- --svg=shots/hex_grid_plan.svg]   (--svg writes a plan of every cell)
 
 func _initialize() -> void:
@@ -11,7 +11,7 @@ func _initialize() -> void:
 		if a.begins_with("--"):
 			opt[a.substr(2).get_slice("=", 0)] = a.get_slice("=", 1) if "=" in a else "1"
 	var g := CSGrid.new()
-	g.generate(int(opt.get("seed", 1)))
+	g.generate(int(opt.get("seed", 1)), CSGrid.RINGS, str(opt.get("grid", "dodeca")))
 	var b := CSBuild.new()
 	b.grid = g
 	var by_n := {}
@@ -73,7 +73,7 @@ func _initialize() -> void:
 	var dk := dirs.keys()
 	dk.sort()
 	print("%d line orientations (%d headings, every 30 deg): %s" % [dk.size(), dk.size() * 2, str(dk)])
-	print("corner angles (deg: count): %s   grid %s: %d dodecagons, %d triangles in all" % [str(corners), CSGrid.GRID_ID, g.d_count, g.verts.size() - g.d_count])
+	print("corner angles (deg: count): %s   grid %s: %d building cells (the sea ring included), %d triangles in all" % [str(corners), CSGrid.id_of(g.kind), g.d_count, g.verts.size() - g.d_count])
 	print("side length min %.2f p10 %.2f median %.2f p90 %.2f max %.2f" % [lens[0], lens[lens.size() / 10], lens[lens.size() / 2], lens[lens.size() * 9 / 10], lens[lens.size() - 1]])
 	print("elongation min %.2f median %.2f p90 %.2f max %.2f" % [elong[0], elong[elong.size() / 2], elong[elong.size() * 9 / 10], elong[elong.size() - 1]])
 	print("area min %.1f median %.1f max %.1f" % [areas[0], areas[areas.size() / 2], areas[areas.size() - 1]])
@@ -83,8 +83,8 @@ func _initialize() -> void:
 
 
 func _write_svg(g: CSGrid, path: String) -> void:
-	## A plan of the cells: dodecagons dark blue, triangles light blue, the sea ring grey; 9 px to the metre.
-	var sc := 9.0
+	## A plan of the cells: dodecagons dark blue, triangles light blue, the sea ring grey; 6 px to the metre.
+	var sc := 6.0
 	var ext := 0.0
 	for v in g.verts.size():
 		ext = maxf(ext, g.verts[v].length())
@@ -100,7 +100,9 @@ func _write_svg(g: CSGrid, path: String) -> void:
 			pts.append("%.1f,%.1f" % [(q.x + ext) * sc, (q.y + ext) * sc])
 		var fill := "#3a4a54"
 		if g.buildable(v):
-			fill = "#2c5b72" if g.is_dodecagon(v) else "#5aa0bb"
+			fill = "#2c5b72"
+		elif not g.is_dodecagon(v):
+			fill = "#5aa0bb"                 # the triangles: part of the grid, not built on
 		out += '<polygon points="%s" fill="%s" stroke="#cfe6ef" stroke-width="1"/>\n' % [" ".join(pts), fill]
 	out += "</svg>\n"
 	var f := FileAccess.open(path, FileAccess.WRITE)
