@@ -4,6 +4,8 @@ extends SceneTree
 ## another, a right-click takes it away, Ctrl+Z / Ctrl+Y undo and redo, a left drag previews a row of blocks and the release builds them (one undo step), a
 ## middle drag moves the camera, a right drag turns it, a swatch only picks a colour, and ten quick clicks all land in the shown castle.
 ## Run: Godot --path . --audio-driver Dummy --resolution 1600x900 --script res://tests/verify_cs_editor.gd -- --cs-fresh
+## The spots it clicks are chosen for a window of at least 1600x900 (the castle fills a smaller one and the bars cover the free sea):
+## in a smaller window it prints why and exits with code 4 without running a check.
 
 const FRAME_CAP := 4000
 
@@ -227,6 +229,11 @@ func _safe(s: Vector2) -> bool:
 
 func _run() -> void:
 	await _wait(5)
+	var win := root.get_visible_rect().size
+	if win.x < 1599.0 or win.y < 899.0:
+		print("NOT RUN: this suite needs a window of at least 1600x900 (this one is %dx%d); start it with --resolution 1600x900" % [int(win.x), int(win.y)])
+		quit(4)
+		return
 	main.load_starter("castle")
 	await _settle()
 	var town: CSTown = main.town
@@ -526,7 +533,11 @@ func _run() -> void:
 			if grid.verts[w].distance_to(grid.verts[v]) < 10.0:
 				apart = false
 		if d > 22.0 and d < 34.0 and apart and _safe(s):
-			ring.append(v)
+			# only spots a click reaches itself: not behind a wall or a tower in front (a click there lands on that block, and when
+			# the worker has not yet built the earlier clicks two such clicks name the same face, so the second adds nothing)
+			var pk0: Dictionary = main.pick(s)
+			if (pk0.add as Array).size() == 2 and int(pk0.add[0]) == v and int(pk0.add[1]) == 0:
+				ring.append(v)
 	var n3 := town.size()
 	var t0 := Time.get_ticks_msec()
 	for v: int in ring:
