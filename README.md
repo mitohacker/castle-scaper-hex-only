@@ -1,11 +1,19 @@
 # Castle Scaper Hex
 
-Castle Scaper Realistic on a **regular hex grid**: a copy of `castle-scaper-realistic` (2026-10-18, Kevin: "duplicate castle-scaper-realistic
-and experiment with a hex grid ... and build castles and let me see how it looks"). Every cell is a regular hexagon (six equal sides, 120 degree
-corners, pointy-top), all of them, along the board's edge too, so towers are hexagonal prisms and walls zig-zag; every cell corner is shared by
-three cells that all touch, so two blocks never meet at only a corner.
-See SPEC section 0. `shots/hex_grid_plan.svg` is a plan of the cells (every one a hexagon). The other `shots/hex_*` pictures, `hex_gallery.jpg` among them,
-were rendered before the flips were removed (their coasts still show the older, irregular cells): re-take them with `tools/shots.ps1`.
+Castle Scaper Realistic on a **double hex grid**: a copy of `castle-scaper-realistic` (2026-10-18, Kevin: "duplicate castle-scaper-realistic
+and experiment with a hex grid ... and build castles and let me see how it looks"; then "I want a double hex grid, meaning there are 12 sides",
+"two regular hex grids overlaid, one rotated 30 degrees, so lines run in 12 directions").
+
+**The grid.** Two regular hexagon grids of the same size, one turned 30 degrees, draw lines in 12 directions. The cells are the
+truncated hexagonal tiling (3.12.12): regular **dodecagons (12 sides)** that touch their six neighbours side to side, and an equilateral
+**triangle (3 sides)** in the gap between every three of them; every side of every cell is 2.887 m. A hexagon-shaped island of 169 dodecagons and
+384 triangles (553 cells) stands in the sea. All cells are convex, every corner is shared by exactly three cells that all touch (so two blocks never
+meet at only a corner), and the sides run in 12 directions (multiples of 30 degrees). See SPEC section 0 for why this cell definition and not the
+full set of faces of the two overlaid line sets. `shots/hex_grid_plan.svg` is a plan of the cells; the other `shots/hex_*` pictures were rendered on
+earlier grids (hexagons, irregular cells): re-take them with `tools/shots.ps1`.
+
+**Straight walls.** The **Straight wall** button next to the build-type buttons (or the **T** key) turns on a drag that lays a straight row of blocks
+along the grid's lines, instead of following the pointer cell by cell: see the controls below and SPEC section 7.
 
 The rest is Castle Scaper Realistic's:
 
@@ -30,13 +38,14 @@ verify-castle-scaper-hex.bat      :: compile, core suite (headless), editor suit
 |---|---|
 | left click | put a block (on the sea, on top, or beside: the face under the mouse decides) |
 | **left drag** | **preview, then build on release**: hold the button and move, and a translucent ghost shows every block the stroke would place (moving back over cells takes them off); nothing is built while the button is down. Release builds them all as one undo step. Esc or the right button cancels. A plain click still builds one block |
+| **T** / the **Straight wall** button | **straight walls**: with it on, a left drag previews a straight row from the cell you pressed on to the pointer, snapped to the nearest of the grid's 12 directions (multiples of 30 degrees) so the wall lies on a grid line; the ghost follows the pointer (turning to another direction as it goes round), nothing is built while the button is down, the release builds the row as one undo step, Esc or the right button cancels, and a plain click still builds one block. Off: the drag follows the pointer cell by cell as above. The status line says "Straight wall at N deg: ..." while you drag |
 | right click | take it away |
 | W A S D (arrows) / Q E / Shift | move the view across the map / turn it / three times faster |
 | right drag / middle drag / wheel | turn / move / zoom (a left drag previews and builds, so it no longer moves the view; a right drag turns, so there is no drag-to-remove: right-click each block) |
 | 1-0 - = or the swatches | material |
 | Ctrl+Z / Ctrl+Y / Ctrl+S / Ctrl+N | undo / redo / save / empty sea |
 | L / G | the light: golden hour, overcast, bright noon, dusk / the quality: low, medium, high, ultra |
-| Tab / F1-F6 | what a click builds: castle, land, road, trees, rocks, mountains (the buttons above the swatches) |
+| Tab / F1-F6 | what a click builds: castle, land, road, trees, rocks, mountains (the buttons above the swatches; the Straight wall button sits next to them) |
 | N / I | the pen: off, light, full (outlines, hatching, scribbles drawn over the picture) / what it colours in with: colour pencil, watercolour, marker, crayon, stipple, scribble, gouache, ink wash, none |
 | B / P / F / Space | birds / details / frame / slow turn |
 

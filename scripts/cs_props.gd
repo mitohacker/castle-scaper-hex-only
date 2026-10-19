@@ -464,7 +464,7 @@ func _towers() -> void:
 					sh.group = "shield %d" % kk
 					sh.boxes = [box(o, bas, Vector3(-0.3, -0.42, 0.0), Vector3(0.3, 0.38, 0.13))]
 					sh.inst = [[M_SHIELD, Transform3D(bas, o), int(ha[0]), int(ha[1])]]
-			if k == tk and CSBuild.h01(v, 55) < 0.65:
+			if k == tk and CSBuild.h01(v, 55) < 1.01:
 				var hb: Array = HERALDRY[int(CSBuild.h01(v, k, 57) * float(HERALDRY.size())) % HERALDRY.size()]
 				for m: Array in _tower_spots(v, k, not odd):
 					var q: Vector2 = m[0]
@@ -687,11 +687,13 @@ func _courts() -> void:
 				continue
 			var along := (f1 - f0) / len
 			var out := Vector2(along.y, -along.x)
-			for si in 2:
+			# a side of 2.9 m (every side of the double hex grid) holds one spot in the middle, a longer one two
+			var wide := len >= 4.0
+			for si in 2 if wide else 1:
 				var slot := u * 32 + i * 2 + si
 				if CSBuild.h01(slot, 0, 91) > 0.55:
 					continue
-				var q := (f0 + f1) * 0.5 + along * (0.27 if si == 1 else -0.27) * len
+				var q := (f0 + f1) * 0.5 + (along * (0.27 if si == 1 else -0.27) * len if wide else Vector2.ZERO)
 				var g := "court %d" % slot
 				var h := CSBuild.h01(slot, 0, 92)
 				var yaw := (CSBuild.h01(slot, 0, 94) - 0.5) * 0.4
@@ -703,11 +705,11 @@ func _courts() -> void:
 				if h < 0.4:
 					var b2 := wall_basis(out.rotated(yaw + (CSBuild.h01(slot, 0, 95) - 0.5) * 0.4))
 					crates.append([M_CRATE, foot + Vector3(0.0, 0.66, 0.0), b2, 0.34, 0.66])
-				elif h < 0.7:
+				elif h < 0.7 and wide:
 					crates.append([M_CRATE, foot + side * 0.74, bas, 0.34, 0.66])
 				_court_cand(CRATES, u, w, slot, g, crates)
 				var barrels := [[M_BARREL, foot, bas, 0.35, 0.86]]
-				if h > 0.5:
+				if h > 0.5 and wide:
 					barrels.append([M_BARREL, foot - side * 0.74, bas, 0.35, 0.86])
 				_court_cand(BARRELS, u, w, slot, g, barrels)
 

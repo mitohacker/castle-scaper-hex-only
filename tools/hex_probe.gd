@@ -1,5 +1,5 @@
 extends SceneTree
-## Stress test of the regular hex grid: random click-built castles (and mixed-style towns), plus towers and walls on every cell along
+## Stress test of the double hex grid (dodecagons and triangles): random click-built castles (and mixed-style towns), plus towers and walls on every cell along
 ## the board's edge, each audited for open edges, non-manifold edges, flipped faces and T-junctions.
 ## Run: Godot --headless --path . --script res://tools/hex_probe.gd -- --towns=40 [--clicks=70] [--styles=0,-1,1,2,3,4,5,6] [--from=0]
 

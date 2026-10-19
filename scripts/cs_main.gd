@@ -82,6 +82,10 @@ var stroke_targets := {}            # column -> [v, k] (a block) or [v] (a lands
 var stroke_wild := false            # the stroke places landscape columns (the build type was land, road, trees, rocks or mountains)
 var stroke_last := Vector2.ZERO     # where the stroke was last sampled
 var stroke_mi: MeshInstance3D       # the preview: one translucent prism per previewed target, the look of the hover ghost
+var straight_mode := false          # a drag lays a straight wall along a grid line (T, the Straight button)
+var stroke_start := Vector2.ZERO    # a straight stroke: the middle of the cell it began on
+var stroke_level := 0               # ... and the level its blocks go on
+var stroke_deg := 0                 # ... and the grid direction (degrees) the preview lies along
 var history := []
 var future := []
 var dirty := true
@@ -860,6 +864,15 @@ func set_build_type(t: int) -> void:
 	flash("Build: " + str(CSTown.TYPE_NAMES[build_type]))
 
 
+func set_straight(on: bool) -> void:
+	## Straight wall mode: a drag lays a straight row of blocks along a grid line (a click still builds one block).
+	straight_mode = on
+	_stroke_cancel(false)
+	if ui:
+		ui.refresh()
+	flash("Straight walls ON: drag along a grid line (12 directions), release builds it, T turns it off" if on else "Straight walls off: a drag follows the pointer cell by cell")
+
+
 func _held_above(v: int, k: int) -> Array:
 	## The lowest block of v's column at level k or above (what an arch, a pillar or corbels at level k hold up).
 	for kk in range(maxi(k, 0), CSTown.MAX_LEVEL + 1):
@@ -881,7 +894,10 @@ func _inside_cell(v: int, pt: Vector2, margin: float) -> bool:
 func _update_ghost() -> void:
 	if stroke_active:
 		ghost_mi.visible = false         # the stroke's preview shows the cell under the pointer too
-		status_msg = "Drag preview: %d to build. Release to build them, Esc or the right button to cancel" % stroke_cols.size()
+		if straight_mode:
+			status_msg = "Straight wall at %d deg: %d to build. Release to build them, Esc or the right button to cancel" % [stroke_deg, stroke_cols.size()]
+		else:
+			status_msg = "Drag preview: %d to build. Release to build them, Esc or the right button to cancel" % stroke_cols.size()
 		status_t = 0.3
 		return
 	if build_type >= CSTown.BUILDING_TYPES and not press.has(MOUSE_BUTTON_RIGHT):
@@ -1180,7 +1196,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				and not press.has(MOUSE_BUTTON_RIGHT) and not press.has(MOUSE_BUTTON_MIDDLE):
 			if not stroke_active:
 				_stroke_begin(press[MOUSE_BUTTON_LEFT].pos)
-			_stroke_to(m.position)
+			if stroke_active:
+				_stroke_to(m.position)
 	elif event is InputEventKey and event.pressed and not event.echo:
 		_key(event as InputEventKey)
 
@@ -1188,17 +1205,56 @@ func _unhandled_input(event: InputEvent) -> void:
 # --- strokes: a left-button drag previews a row of blocks, the release builds them ------------------
 
 func _stroke_begin(pos: Vector2) -> void:
-	stroke_active = true
 	stroke_wild = build_type >= CSTown.BUILDING_TYPES
 	stroke_cols.clear()
 	stroke_targets.clear()
 	stroke_last = pos
+	if straight_mode:
+		# the stroke starts on the cell a click at the press would build on; without one there is no stroke
+		var pk := pick(pos)
+		var v0 := int(pk.get("wadd", -1)) if stroke_wild else (int((pk.get("add", [-1]) as Array)[0]) if not (pk.get("add", []) as Array).is_empty() else -1)
+		if v0 < 0 or not grid.buildable(v0):
+			_stroke_cancel(false)
+			return
+		stroke_start = grid.verts[v0]
+		stroke_level = 0 if stroke_wild else int((pk.add as Array)[1])
+		stroke_active = true
+		_stroke_line(pk)
+		_stroke_show()
+		return
+	stroke_active = true
 	_stroke_sample(pos)
 	_stroke_show()
 
 
+func _stroke_line(pk: Dictionary) -> void:
+	## A straight stroke: from the middle of the cell it began on along the grid direction nearest to where the pointer is, as far as
+	## the pointer has gone along it. The targets are the cells that line passes through (or runs along), at the level of the first.
+	var pt: Vector3 = pk.get("point", Vector3.ZERO)
+	var d := Vector2(pt.x, pt.z) - stroke_start
+	var dir := Vector2.ZERO
+	var len_along := 0.0
+	if pt != Vector3.ZERO and d.length() > 0.5:
+		dir = CSGrid.snap_direction(d)
+		len_along = maxf(d.dot(dir), 0.0)
+		stroke_deg = roundi(rad_to_deg(dir.angle()))
+	var cells := grid.cells_along(stroke_start, stroke_start + dir * len_along)
+	stroke_cols.clear()
+	stroke_targets.clear()
+	for c: int in cells:
+		var target := [c] if stroke_wild else [c, stroke_level]
+		if _stroke_can_build(target):
+			stroke_cols.append(c)
+			stroke_targets[c] = target
+
+
 func _stroke_to(pos: Vector2) -> void:
 	## Sample the line from the last point to pos every few pixels, so a fast drag leaves no gaps, and show the result.
+	if straight_mode:
+		_stroke_line(pick(pos))
+		stroke_last = pos
+		_stroke_show()
+		return
 	var d := stroke_last.distance_to(pos)
 	var n := maxi(int(ceilf(d / PAINT_STEP_PX)), 1)
 	for i in range(1, n + 1):
@@ -1312,6 +1368,9 @@ func _key(e: InputEventKey) -> void:
 	match e.keycode:
 		KEY_ESCAPE:
 			_stroke_cancel()
+		KEY_T:
+			if not ctrl:
+				set_straight(not straight_mode)
 		KEY_Z:
 			if ctrl:
 				if e.shift_pressed:

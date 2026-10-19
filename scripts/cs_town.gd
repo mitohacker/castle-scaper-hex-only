@@ -18,7 +18,7 @@ var blocks := {}            # v * 64 + k -> style * 16 + colour index (the castl
 ## except that a courtyard (castle land with no block) can take land, trees and a road.
 var wild := {}
 var grid_seed := 1
-var grid_radius := 10
+var grid_radius := CSGrid.RINGS
 var name := "Untitled"
 
 
@@ -193,15 +193,19 @@ func to_dict() -> Dictionary:
 	for v: int in wild_columns():
 		var r: Dictionary = wild[v]
 		wl.append([v, int(r.get("l", 0)), str(r.get("h", "")), int(r.get("t", 0)), int(r.get("d", 0))])
-	return {"name": name, "grid_seed": grid_seed, "grid_radius": grid_radius, "blocks": list, "wild": wl}
+	return {"name": name, "grid": CSGrid.GRID_ID, "grid_seed": grid_seed, "grid_radius": grid_radius, "blocks": list, "wild": wl}
 
 
 func from_dict(d: Dictionary) -> void:
 	blocks.clear()
 	name = str(d.get("name", "Untitled"))
 	grid_seed = int(d.get("grid_seed", 1))
-	grid_radius = int(d.get("grid_radius", 10))
+	grid_radius = int(d.get("grid_radius", CSGrid.RINGS))
 	wild.clear()
+	if str(d.get("grid", "")) != CSGrid.GRID_ID:
+		# a town saved on another grid: its column numbers mean other cells here, so it opens as an empty sea
+		grid_radius = CSGrid.RINGS
+		return
 	for b in d.get("blocks", []):
 		blocks[int(b[0]) * 64 + int(b[1])] = int(b[2])
 	for w in d.get("wild", []):

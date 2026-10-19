@@ -27,6 +27,7 @@ var type_btns: Array = []
 var castles_menu: MenuButton
 var status: Label
 var stats: Label
+var b_straight: Button
 var help: Label
 
 
@@ -131,6 +132,14 @@ func _ready() -> void:
 		tb.pressed.connect(func(): main.set_build_type(tix))
 		th_box.add_child(tb)
 		type_btns.append(tb)
+	# straight walls: a drag lays a straight row of blocks along a grid line
+	th_box.add_child(VSeparator.new())
+	b_straight = Button.new()
+	b_straight.focus_mode = Control.FOCUS_NONE
+	b_straight.toggle_mode = true
+	b_straight.tooltip_text = "Straight walls (T): drag along one of the grid's 12 directions, a ghost shows the wall, release builds it; Esc cancels"
+	b_straight.pressed.connect(func(): main.set_straight(b_straight.button_pressed))
+	th_box.add_child(b_straight)
 	# the colours
 	swatch_bar = PanelContainer.new()
 	root.add_child(swatch_bar)
@@ -152,7 +161,7 @@ func _ready() -> void:
 		sh.add_child(b)
 		swatches.append(b)
 	help = Label.new()
-	help.text = "Click: build  ·  Left-drag: preview a row, release builds it (Esc / right button cancels)  ·  Right-click: take away  ·  Tab / F1-F12: what a click builds  ·  W A S D / middle-drag: move  ·  Q E / right-drag: turn  ·  Wheel: zoom  ·  Ctrl+Z: undo"
+	help.text = "Click: build  ·  Drag: preview a row, release builds (Esc cancels)  ·  T: straight wall  ·  Right-click: take away  ·  Tab / F1-F12: build type  ·  W A S D / middle-drag: move  ·  Q E / right-drag: turn  ·  Wheel: zoom  ·  Ctrl+Z: undo"
 	help.add_theme_font_size_override("font_size", 13)
 	help.add_theme_color_override("font_color", Color(1, 1, 1, 0.95))
 	help.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.45))
@@ -227,6 +236,11 @@ func refresh() -> void:
 		b_quality.text = "Quality: " + main.look.quality_name()
 		b_pen.text = "Pen: " + main.look.pen_name()
 		b_infill.text = "Infill: " + main.look.infill_name()
+	if b_straight != null:
+		b_straight.set_pressed_no_signal(main.straight_mode)
+		b_straight.text = "Straight wall: On (T)" if main.straight_mode else "Straight wall (T)"
+		b_straight.add_theme_color_override("font_color", Color(0.1, 0.35, 0.65) if main.straight_mode else INK)
+		b_straight.add_theme_font_size_override("font_size", 18 if main.straight_mode else 15)
 	for ti in type_btns.size():
 		var tbn: Button = type_btns[ti]
 		tbn.add_theme_color_override("font_color", Color(0.1, 0.35, 0.65) if ti == main.build_type else INK)

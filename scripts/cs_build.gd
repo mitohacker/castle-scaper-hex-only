@@ -360,11 +360,44 @@ func _find_supports() -> void:
 			pieces[kk] = "pillar" if faces.is_empty() else "corbel"
 
 
+func _hangs(v: int, except_k: int) -> bool:
+	## Has column v a block with nothing under it, other than the one at level except_k (a corbel or a pillar will hold it)?
+	for j in range(1, top_of(v) + 1):
+		if j != except_k and town.has(v, j) and not town.has(v, j - 1):
+			return true
+	return false
+
+
+func _mouth_blocked(v: int, k: int, i: int, j: int, s: Vector2, tc: float, w: float) -> bool:
+	## Does a block hang beside the passage's mouth? The passage runs through the sides the strip |along s - tc| <= w crosses (the open
+	## ones: the abutments are sides i and j); a neighbour there with a block that hangs (at any level: the plan splits every outline at every
+	## other's corners whatever their heights) gets corbels whose corners fall next to the passage's edges where they cross the shared side,
+	## and the two meet along a vertical line or leave a crack.
+	var kf := k - 1
+	var nb: PackedInt32Array = grid.nbrs[v]
+	var p := grid.verts[v]
+	var c := p + s * tc
+	for m in nb.size():
+		if m == i or m == j:
+			continue
+		var u := nb[m]
+		if not _hangs(u, -1):
+			continue
+		var f := grid.face(v, m)
+		var d0 := (f[0] - c).dot(s)
+		var d1 := (f[1] - c).dot(s)
+		if minf(absf(d0), absf(d1)) <= w + 0.3 or (d0 < 0.0) != (d1 < 0.0):
+			return true
+	return false
+
+
 func _arch_fit(v: int, k: int) -> Dictionary:
 	## The arch under block (v, k): two neighbours on opposite-ish sides with blocks at level k - 1 (its abutments) and
 	## room between them. Read from the blocks and the cell as the grid made it, so it does not depend on other arches.
 	## Pairs whose arch opens on both sides win, then the most opposite.
 	var kf := k - 1
+	if _hangs(v, k):
+		return {}                       # another block of the column hangs too: its corbels and the arch's passage would share the cell's sides
 	var nb: PackedInt32Array = grid.nbrs[v]
 	var n := nb.size()
 	var p := grid.verts[v]
@@ -398,6 +431,8 @@ func _arch_fit(v: int, k: int) -> Dictionary:
 			var tj := minf((fj[0] - p).dot(s), (fj[1] - p).dot(s))
 			var w := (tj - ti) * 0.5 - ARCH_PIER
 			if w < ARCH_MIN_W:
+				continue
+			if _mouth_blocked(v, k, i, j, s, (ti + tj) * 0.5, minf(w, ARCH_MAX_W)):
 				continue
 			best_score = score
 			best = {"i": i, "j": j, "s": s, "tc": (ti + tj) * 0.5, "w": minf(w, ARCH_MAX_W), "open": open_a or open_b}
@@ -516,6 +551,10 @@ func _corbel(v: int, k: int, i: int) -> void:
 	var b := ol[i]
 	var dir := (b - a).normalized()
 	var nin := Vector2(-dir.y, dir.x)
+	var dprev := (a - ol[(i + n - 2) % n]).normalized()
+	var dnext := (ol[(i + 1) % n] - b).normalized()
+	var nprev := Vector2(-dprev.y, dprev.x)
+	var nnext := Vector2(-dnext.y, dnext.x)
 	var u: int = grid.nbrs[v][i]
 	var iu := grid.index_of(u, v)
 	var olu := level_outline(u, k - 1)
@@ -543,6 +582,10 @@ func _corbel(v: int, k: int, i: int) -> void:
 			break
 		last = r
 		var poly := clip_half(ol, a, nin, r)
+		# only its own side's wedge: where two sides' courses meet at a corner they share the bisector line instead of
+		# overlapping, so no two courses cross inside the cell
+		poly = clip_half(poly, a, nin - nprev, 0.0)
+		poly = clip_half(poly, b, nin - nnext, 0.0)
 		if aa != a or bb != b:
 			# the back from the wall's own corners: a, aa, bb, b in place of the side a -> b
 			var ia := poly.find(a)
@@ -594,10 +637,21 @@ func _pillar(v: int, k: int) -> void:
 		for i in poly.size():
 			room = minf(room, Geometry2D.get_closest_point_to_segment(p, poly[i], poly[(i + 1) % poly.size()]).distance_to(p))
 	var lim := room - 0.15              # no corner of the pillar nearer than this to a side of the cells it joins
-	var r := clampf(room - 0.45, 0.25, PILLAR_R)
-	var rc := minf(r + 0.25, lim)
-	var rb := minf(r + 0.15, lim)
+	var r := clampf(room - 0.6, 0.2, PILLAR_R)     # (a pillar on a small cell: not as wide as the room, a parapet round the walk below is 0.45 thick)
 	var rnd := h01(v, k, 21) < 0.55
+	var rb := minf(r + 0.15, lim)
+	# the base and the shaft stand on the walk below, inside its parapet, whose inner face is PT inside the cell's sides: on a small cell a
+	# pillar of just that radius would touch it along a line, so those two stay 0.1 m clear of it
+	var inner_line := room - PT
+	var eff := func(rad: float) -> float:
+		return rad if rnd else minf(rad * 1.25, lim)
+	for _t in 3:
+		if absf(eff.call(r) - inner_line) < 0.1:
+			r = r + 0.12 if r >= inner_line else maxf(r - 0.12, 0.1)
+		if absf(eff.call(rb) - inner_line) < 0.1:
+			rb = rb + 0.12 if rb >= inner_line else maxf(rb - 0.12, 0.1)
+	rb = minf(maxf(rb, r), lim)
+	var rc := minf(maxf(r + 0.25, rb), lim)
 	var rot := (grid.verts[grid.nbrs[v][0]] - p).angle()
 	var sty := town.style(v, k)
 	var pz := CFMesh.Z_STONE if sty == CSStyle.CASTLE else CSStyle.trim_zone(sty)
@@ -1056,21 +1110,30 @@ func _loop_edge(area: Dictionary, start: Vector2, owner: int) -> Dictionary:
 
 
 static func _ray_in(ol: PackedVector2Array, lim: PackedFloat32Array, q: Vector2, d: Vector2) -> float:
-	## How far q can move along d and stay at least lim[i] inside every side i (ol[i - 1] -> ol[i]) of a convex
-	## counter-clockwise outline (0 when it starts outside): the half-planes themselves, so a margin wider than a narrow
-	## cell cannot turn an inset outline inside out.
-	var best := INF
+	## How far q can move along d and stay inside a convex counter-clockwise outline and at least lim[i] away from every side i
+	## (ol[i - 1] -> ol[i]) that has a margin (0 when it starts too close). The distance is to the side itself, not to its line: on a cell
+	## with obtuse corners (a dodecagon's are 150 degrees) the next side leads away from the flight, and its line would wrongly rule
+	## out the start next to the corner.
 	var n := ol.size()
-	for i in n:
-		var e0 := ol[(i + n - 1) % n]
-		var de := (ol[i] - e0).normalized()
-		var f0 := de.cross(q - e0) - lim[i]
-		var fd := de.cross(d)
-		if f0 < -1e-4:
-			return 0.0
-		if fd < -1e-9:
-			best = minf(best, f0 / -fd)
-	return best
+	var t := 0.0
+	var last := 0.0
+	while t <= 8.0:
+		var p := q + d * t
+		var ok_here := true
+		for i in n:
+			var e0 := ol[(i + n - 1) % n]
+			var e1 := ol[i]
+			if (e1 - e0).cross(p - e0) < -1e-4 * (e1 - e0).length():
+				ok_here = false
+				break
+			if lim[i] > 0.0 and Geometry2D.get_closest_point_to_segment(p, e0, e1).distance_to(p) < lim[i] - 1e-4:
+				ok_here = false
+				break
+		if not ok_here:
+			return last if t > 0.0 else 0.0
+		last = t
+		t += 0.02
+	return last
 
 
 func _stair_fit(c: int, u: int, kl: int, low: Dictionary, up: Dictionary) -> Dictionary:
