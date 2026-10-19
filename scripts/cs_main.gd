@@ -707,6 +707,20 @@ func _start_build() -> void:
 		ui.refresh()
 
 
+func shutdown_build() -> void:
+	## Wait for the build on the worker thread and drop it: nothing may still be running when the scene is freed (quitting during a build crashed).
+	if build_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(build_task)
+		build_task = -1
+	building = false
+	build_pending = false
+	build_job = {}
+
+
+func _exit_tree() -> void:
+	shutdown_build()
+
+
 func _poll_build() -> void:
 	if build_task < 0 or not WorkerThreadPool.is_task_completed(build_task):
 		return
@@ -1247,6 +1261,7 @@ func _shot_step() -> void:
 		get_viewport().get_texture().get_image().save_png(shot_path)
 		print("saved ", shot_path)
 		shot_path = ""
+		shutdown_build()
 		get_tree().quit(0)
 		return
 	if shot_next > 0.0:
@@ -1256,6 +1271,7 @@ func _shot_step() -> void:
 		print("saved ", p)
 	if shot_views.is_empty():
 		shot_path = ""
+		shutdown_build()
 		get_tree().quit(0)
 		return
 	var v: Array = shot_views[0]

@@ -72,7 +72,7 @@ as before; along any other heading (22.5, 45, 67.5 ... with 16; 15, 45, 75 ... w
 setting of the castle: saved ("wall_dirs"), kept by undo, shown on the button ("Directions: 16 (R)") and in the cue while dragging ("Straight wall at 22.5 deg (16
 directions), 11.0 m long"). Walls are independent of the cells, so merging, corners and the towers work at every heading; what a non-lattice heading
 changes is only where a wall's sides fall against the cells' corners and a castle's battlements: 12 and 16 directions audit clean (0 defects in 80 towns x 5
-walls each), 24 directions had 2 defective towns of 80 (a wall's side within millimetres of a block's battlements); see section 8 for the numbers.
+walls each) before the notch rule, and 4-5 of 100 towns x 5 walls at 16 directions and 2-3 at 24 afterwards (a wall off the grid's lines through a castle can meet a block's land or battlements in a sliver; at 12 directions the same probe finds none): walls through castles at 16 and 24 directions are about 1 in 130 walls with a rebuild defect, a few cm of stray geometry rather than a hole in the castle. Lone walls, bends, crossings and Ts at every angle of every direction count are clean (`tools/corner_probe.gd`, 490 shapes).
 
 ## 0. The double hex grid (2026-10-19)
 
@@ -513,6 +513,12 @@ the pointer comes back and swings to another heading when it goes round; nothing
 wall as ONE undo step; its built mesh is straight (every vertex on four parallel lines within 1.2 cm, 1.9 m thick, as long as the preview said);
 a click on it picks it, a right-click takes it away (one undo step), Ctrl+Z / Ctrl+Y; Esc and the right button cancel (and the release after builds
 nothing); a plain click builds one block; with the mode off the drag is the ordinary paint preview again.
+
+**The editor suite's budget (2026-10-19, after Kevin's run on a real GPU).** A cap in frames (the old `FRAME_CAP := 4000`) does not work: a real GPU draws a frame
+in a few ms while one click's rebuild on the worker takes about 1.3 s at the default cell size (incremental plan 0.4-0.6 s, props 0.5 s; 0.75 s at the full size), so a step spends hundreds of
+frames waiting. The suite now caps wall-clock time (`TIME_CAP_MS`, 25 min) and each wait for the build is by time (`SETTLE_CAP_MS`, 2 min), not by frames. Quitting while
+the worker thread still ran crashed on exit (access violation): `CSMain.shutdown_build()` waits for the task and is called from `_exit_tree`, before a shot's quit and
+from the suite's own `_quit`. The launch and verify `.bat` files run `Godot --headless --import` first, so new `class_name` scripts are in the class cache.
 
 **Round 3's tests (2026-10-19).** `tests/verify_cs_core.gd` gained: `_merging()` (Kevin's exact castle_004 list loaded as a round-2 save: 30 walls merge into at most 20,
 the merged ones are thicker than a single wall, no two parallel walls are left closer than the merge threshold, the merged castle builds closed, walls at

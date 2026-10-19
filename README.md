@@ -41,11 +41,11 @@ at 1080p). Every texture is procedural; the look was fitted to Tripo image-gen m
 
 Besides castle blocks you can build **land, roads, trees, rocks and mountains**: each click turns into something different depending on what is round it (oaks, pines, willows, orchards; cobbles, gravel, dirt; junctions, bridges, jetties; quarries, scree, snow) - the Kingdom starter shows them all round the castle (SPEC section 11).
 
-Godot 4.7 (GDScript). A copy of Castle Scaper (which is unchanged).
+Godot 4.7 (GDScript). A copy of Castle Scaper (which is unchanged). After pulling new scripts run `godot --headless --import --path .` once (both .bat files do).
 
 ```bat
-launch-castle-scaper-hex.bat      :: play
-verify-castle-scaper-hex.bat      :: compile, core suite (headless), editor suite, look suite (windowed, memory guard)
+launch-castle-scaper-hex.bat      :: import pass (class cache), then play
+verify-castle-scaper-hex.bat      :: import pass, compile, core suite (headless), editor suite, look suite (windowed, memory guard)
 ```
 
 | | |

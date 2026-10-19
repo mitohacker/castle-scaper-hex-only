@@ -7,12 +7,15 @@ extends SceneTree
 ## The spots it clicks are chosen for a window of at least 1600x900 (the castle fills a smaller one and the bars cover the free sea):
 ## in a smaller window it prints why and exits with code 4 without running a check.
 
-const FRAME_CAP := 4000
+const TIME_CAP_MS := 1500000        # the whole run: 25 minutes of wall-clock time. (A cap in frames does not do: a real GPU draws a frame in 7 ms while a
+                                    # build on the worker takes about a second and a half at the default cell size, so the frames a step needs depend on the machine.)
+const SETTLE_CAP_MS := 120000       # one wait for the castle on screen to catch up with the town
 
 var fails := 0
 var checks := 0
 var main: Node3D
 var frames := 0
+var t_start := 0
 
 
 func ok(cond: bool, what: String) -> void:
@@ -23,6 +26,7 @@ func ok(cond: bool, what: String) -> void:
 
 
 func _initialize() -> void:
+	t_start = Time.get_ticks_msec()
 	main = load("res://scenes/main.tscn").instantiate()
 	root.add_child(main)
 	_run.call_deferred()
@@ -32,13 +36,20 @@ func _process(_delta: float) -> bool:
 	frames += 1
 	if OS.get_static_memory_usage() > 1.5e9 or Performance.get_monitor(Performance.OBJECT_NODE_COUNT) > 150000.0:
 		push_error("runaway: static memory %d, nodes %d" % [OS.get_static_memory_usage(), Performance.get_monitor(Performance.OBJECT_NODE_COUNT)])
-		quit(3)
+		_quit(3)
 		return true
-	if frames > FRAME_CAP:
-		print("  FAIL the test ran out of frames")
-		quit(2)
+	if Time.get_ticks_msec() - t_start > TIME_CAP_MS:
+		print("  FAIL the test ran out of time (%d s, %d frames)" % [(Time.get_ticks_msec() - t_start) / 1000, frames])
+		_quit(2)
 		return true
 	return false
+
+
+func _quit(code: int) -> void:
+	## Leave cleanly: the castle's worker thread must not still be running when the scene is freed (that was an access violation on exit).
+	if main != null and is_instance_valid(main):
+		main.shutdown_build()
+	quit(code)
 
 
 func _wait(n: int) -> void:
@@ -48,7 +59,8 @@ func _wait(n: int) -> void:
 
 func _settle() -> void:
 	## Until the castle on screen is the town's (the worker idle, nothing dirty), then two physics frames for the shape.
-	for _i in 600:
+	var t0 := Time.get_ticks_msec()
+	while Time.get_ticks_msec() - t0 < SETTLE_CAP_MS:
 		await process_frame
 		if not main.building and not main.dirty and main.build_task < 0:
 			break
@@ -251,7 +263,7 @@ func _run() -> void:
 	var win := root.get_visible_rect().size
 	if win.x < 1599.0 or win.y < 899.0:
 		print("NOT RUN: this suite needs a window of at least 1600x900 (this one is %dx%d); start it with --resolution 1600x900" % [int(win.x), int(win.y)])
-		quit(4)
+		_quit(4)
 		return
 	main.load_starter("castle")
 	await _settle()
@@ -928,4 +940,4 @@ func _run() -> void:
 func _end() -> void:
 	print("%d checks, %d failed" % [checks, fails])
 	await _wait(3)
-	quit(1 if fails else 0)
+	_quit(1 if fails else 0)

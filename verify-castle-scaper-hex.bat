@@ -13,6 +13,9 @@ if not defined GODOT (
 )
 set "GUARD=%~dp0..\.claude\skills\memory-guard\guard_run.ps1"
 
+echo === class cache: an import pass first (new class_names are unknown to a stale cache) ===
+start "" /wait "%GODOT%" --headless --import --path "%cd%"
+
 echo === every script compiles ===
 "%GODOT%" --headless --audio-driver Dummy --path "%cd%" --script res://tools/check_scripts.gd
 if errorlevel 1 goto failed
