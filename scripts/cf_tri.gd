@@ -5,6 +5,10 @@ extends RefCounted
 ## round it: no T-junctions.
 
 const EPS_CROSS := 2e-6      # twice the area below which an ear is degenerate (m^2); Vector2 is 32-bit, keep clear of its noise
+const NEAR := 0.002          # a loop point this close to the chord of a candidate ear blocks it (m): the points of a straight run lie on
+							 # one line to within a mm on the plan's lattice, and the cross products that tell "on the edge" from
+							 # "outside" are far smaller than the float noise of a 20 m chord, so a chord could run through such a point
+							 # and leave a crack where the walls round the region use it
 static var fails := 0         # polygons the clipper could not finish cleanly (read by the audit)
 
 
@@ -53,10 +57,7 @@ static func _quad(o: PackedVector2Array) -> PackedVector2Array:
 		var hi := a.max(b).max(c)
 		var inside_box := floori(p.x / GRID) >= floori(lo.x / GRID) and floori(p.x / GRID) <= floori(hi.x / GRID) and floori(p.y / GRID) >= floori(lo.y / GRID) and floori(p.y / GRID) <= floori(hi.y / GRID)
 		if inside_box and p.distance_squared_to(a) > 1e-10 and p.distance_squared_to(b) > 1e-10 and p.distance_squared_to(c) > 1e-10:
-			var d1 := (b - a).cross(p - a)
-			var d2 := (c - b).cross(p - b)
-			var d3 := (a - c).cross(p - c)
-			if d1 >= -2e-6 and d2 >= -2e-6 and d3 >= -2e-6:
+			if _blocks(a, b, c, p):
 				continue
 		out.append(a)
 		out.append(b)
@@ -209,6 +210,14 @@ static func _on_seg(a: Vector2, b: Vector2, q: Vector2) -> bool:
 	return t > 1e-6 and t < 1.0 - 1e-6
 
 
+static func _blocks(a: Vector2, b: Vector2, c: Vector2, p: Vector2) -> bool:
+	## Does p block the ear a, b, c (counter-clockwise, tip b)? It does inside the triangle (or on its edge), and within NEAR of the
+	## chord a-c that the ear would put between the loop's two neighbours of b.
+	if (b - a).cross(p - a) >= -2e-6 and (c - b).cross(p - b) >= -2e-6 and (a - c).cross(p - c) >= -2e-6:
+		return true
+	return Geometry2D.get_closest_point_to_segment(p, a, c).distance_squared_to(p) < NEAR * NEAR
+
+
 const GRID := 0.4
 const SMALL := 24        # loops up to this many points are tested against every point instead of through the grid
 
@@ -336,10 +345,7 @@ static func _is_ear_small(poly: Array, n: int, prv: PackedInt32Array, nxt: Packe
 			continue
 		# a duplicate of a corner (keyhole bridges) is not a blocker
 		if p.distance_squared_to(a) > 1e-10 and p.distance_squared_to(b) > 1e-10 and p.distance_squared_to(c) > 1e-10:
-			var d1 := (b - a).cross(p - a)
-			var d2 := (c - b).cross(p - b)
-			var d3 := (a - c).cross(p - c)
-			if d1 >= -2e-6 and d2 >= -2e-6 and d3 >= -2e-6:
+			if _blocks(a, b, c, p):
 				return false
 	return true
 
@@ -365,9 +371,6 @@ static func _is_ear(poly: Array, prv: PackedInt32Array, nxt: PackedInt32Array, a
 				var p: Vector2 = poly[k]
 				# a duplicate of a corner (keyhole bridges) is not a blocker
 				if p.distance_squared_to(a) > 1e-10 and p.distance_squared_to(b) > 1e-10 and p.distance_squared_to(c) > 1e-10:
-					var d1 := (b - a).cross(p - a)
-					var d2 := (c - b).cross(p - b)
-					var d3 := (a - c).cross(p - c)
-					if d1 >= -2e-6 and d2 >= -2e-6 and d3 >= -2e-6:
+					if _blocks(a, b, c, p):
 						return false
 	return true

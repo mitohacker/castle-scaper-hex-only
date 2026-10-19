@@ -1,11 +1,35 @@
 # Castle Scaper Hex
 
-Castle Scaper Realistic on an **organic hex grid**: a copy of `castle-scaper-realistic` (2026-10-18, Kevin: "duplicate castle-scaper-realistic
-and experiment with a hex grid for an organic grid instead of the cube grids we have now ... just do hex grid organic randomness and build
-castles and let me see how it looks"). Every cell is a hexagon, pentagon or heptagon (42 / 29 / 29 %; `--cs-flip=0.05` for the calmer first try, 68 % hexagons), warped by relaxation, so towers are
-hexagonal prisms and walls zig-zag; every cell corner is shared by three cells that all touch, so two blocks never meet at only a corner.
-`--cs-grid=quad` brings back Townscaper's quad grid for comparison. See SPEC section 0. Pictures: `shots/compare_quad_vs_hex.jpg`,
-`shots/hex_gallery.jpg`.
+Castle Scaper Realistic on a **12-sided grid**: a copy of `castle-scaper-realistic` (2026-10-18, Kevin: "duplicate castle-scaper-realistic
+and experiment with a hex grid ... and build castles and let me see how it looks"; then "I want a double hex grid, meaning there are 12 sides",
+"two regular hex grids overlaid, one rotated 30 degrees, so lines run in 12 directions", and, seeing the first version: "double not double the
+size... just meaning double the edges and shape").
+
+**The cells (2026-10-19, rounds 3 and 4).** Kevin: "I want smaller grid ... maybe double meaning more hex layered? experiment with it", then, testing the half-area cells: "I want smaller grids".
+The cell size is a setting: every building cell is still a regular **dodecagon (12 sides)**, by default at **a quarter of the area of the hexagon it started from** (5.4 m2, 2.6 m
+across the flats, side 0.70 m; 4681 cells on the same island), and the **Cells** button / **H** also offers 1/6 and 1/8 (experimental: a few defects at 1/6, many at 1/8),
+1/2 (10.8 m2), the full size (21.65 m2) and the plain hexagons at 1/4, 1/2 and the full size. `--cs-cell=1|2|4|6|8` and `--cs-grid=dodeca|hex` start the game on one; a saved
+castle remembers its grid and size ("dodeca-2/4" = 12-sided cells at 1/4 of the area; older saves are the full size and still open). Heights stay (a level is
+4 m); widths scale with the cell (doors, windows, slits, arches, parapets, stairs, the straight wall's thickness), so every rule works at every size. 1/4 is the practical minimum: it has no
+defects on the 30 stress towns and a click builds in about 1.2 s of CPU (1/6: 1.4 s, 1/8: 1.6 s); the numbers are in SPEC section 0b. `shots/cells_ladder.jpg` shows the same castle at 1/2, 1/4, 1/6 and 1/8.
+Two or more hexagon lattices layered at 0/30 and at 0/20/40 degrees were built and rendered as well (`--cs-grid=layer|layer3`, not in the H cycle): their
+cells are irregular polygons of 4 to 12 sides of very different sizes, so they were dropped. `shots/cells_comparison.jpg` shows the same castle on each.
+The cells are the truncated hexagonal tiling (3.12.12): dodecagons touch their six neighbours along a whole side, and in the gap between every three of them
+is a little equilateral triangle, too small to build on (it stays in the grid so every corner is shared by exactly three cells and two blocks never touch at
+only a corner). The sides of the cells run in 12 directions (multiples of 30 degrees). See SPEC section 0. `shots/hex_grid_plan.svg` is a plan of the cells at the
+full size; the older `shots/hex_*` pictures were rendered on earlier grids.
+
+**Switching cells.** The **Cells** button next to the build types, or **H** (Shift+H goes back; press twice: it starts a new empty sea), goes through
+12-sided 1/4 (default), 1/6, 1/8, 1/2, full size, then hexagons 1/4, 1/2, full size. Saved castles remember their grid.
+
+**Straight walls.** With **Straight wall** on (the button next to the build types, or **T**), a drag lays **one continuous straight wall**
+(one level high, a wall walk with battlements on top) from the cell you pressed on, in one of the **12, 16 or 24 directions** (**Directions** button or **R**;
+every 30, 22.5 or 15 degrees; saved with the castle; 12 is the default and runs along the grid's lines), cutting across the cells it passes through instead of
+following them. Walls laid **side by side merge into one thicker wall**: parallel walls whose lines are up to 1.5 cell widths apart (3.9 m at the default cell) and whose spans overlap,
+or which lie end to end up to a cell width apart, become ONE wall (width = the union of the strips, length = the union of the spans, at most 3 cell widths wide); the drag preview already
+shows the merged wall, the release builds it as one undo step, and a save's walls merge when it loads (SPEC 0b). **Corners**: a round **tower** (a little higher than the wall, with its own battlements) stands on every
+end and bend of a wall, and the wedge between two walls that meet at less than 75 degrees is filled; a wall too thick for a round tower ends in a flat cap. Walls that meet or
+cross are one walled shape with the parapet round its outline. `shots/wall_corners.jpg` shows the corners before and after. See the controls below and SPEC section 7.
 
 The rest is Castle Scaper Realistic's:
 
@@ -19,23 +43,27 @@ at 1080p). Every texture is procedural; the look was fitted to Tripo image-gen m
 
 Besides castle blocks you can build **land, roads, trees, rocks and mountains**: each click turns into something different depending on what is round it (oaks, pines, willows, orchards; cobbles, gravel, dirt; junctions, bridges, jetties; quarries, scree, snow) - the Kingdom starter shows them all round the castle (SPEC section 11).
 
-Godot 4.7 (GDScript). A copy of Castle Scaper (which is unchanged).
+Godot 4.7 (GDScript). A copy of Castle Scaper (which is unchanged). After pulling new scripts run `godot --headless --import --path .` once (both .bat files do).
 
 ```bat
-launch-castle-scaper-hex.bat      :: play (hex grid; add -- --cs-grid=quad for the old grid)
-verify-castle-scaper-hex.bat      :: compile, core suite (headless), editor suite, look suite (windowed, memory guard)
+launch-castle-scaper-hex.bat      :: import pass (class cache), then play
+verify-castle-scaper-hex.bat      :: import pass, compile, core suite (headless), editor suite, look suite (windowed, memory guard)
 ```
 
 | | |
 |---|---|
 | left click | put a block (on the sea, on top, or beside: the face under the mouse decides) |
+| **left drag** | **preview, then build on release**: hold the button and move, and a translucent ghost shows every block the stroke would place (moving back over cells takes them off); nothing is built while the button is down. Release builds them all as one undo step. Esc or the right button cancels. A plain click still builds one block |
+| **T** / the **Straight wall** button | **straight walls** (castle types): with it on, a left drag previews **one straight wall** from the cell you pressed on, along the nearest of the 12 / 16 / 24 wall directions (R), ending at the middle of the cell under the pointer on a grid line, or every half cell spacing off the grid's lines; the ghost follows the pointer (shorter when it comes back, another direction when it goes round), nothing is built while the button is down, the release builds the wall as one undo step, Esc or the right button cancels, a plain click still builds one block, a right-click on a wall takes it away. Off: the drag follows the pointer cell by cell as above. The status line says "Straight wall at N deg, M m long ..." while you drag, and, when it lies against other walls, that it joins them into one thicker wall (the ghost is that merged wall) |
 | right click | take it away |
 | W A S D (arrows) / Q E / Shift | move the view across the map / turn it / three times faster |
-| right drag / left or middle drag / wheel | turn / move / zoom |
+| right drag / middle drag / wheel | turn / move / zoom (a left drag previews and builds, so it no longer moves the view; a right drag turns, so there is no drag-to-remove: right-click each block) |
 | 1-0 - = or the swatches | material |
 | Ctrl+Z / Ctrl+Y / Ctrl+S / Ctrl+N | undo / redo / save / empty sea |
 | L / G | the light: golden hour, overcast, bright noon, dusk / the quality: low, medium, high, ultra |
-| Tab / F1-F6 | what a click builds: castle, land, road, trees, rocks, mountains (the buttons above the swatches) |
+| Tab / F1-F6 | what a click builds: castle, land, road, trees, rocks, mountains (the buttons above the swatches; the Straight wall button sits next to them) |
+| H / Shift+H | the cells: 12-sided at 1/4 (default), 1/6, 1/8, 1/2 or the full size, or hexagons (the Cells button; press twice, it starts a new empty sea) |
+| R | how many directions a straight wall can take: 12, 16 or 24 (the Directions button; saved with the castle) |
 | N / I | the pen: off, light, full (outlines, hatching, scribbles drawn over the picture) / what it colours in with: colour pencil, watercolour, marker, crayon, stipple, scribble, gouache, ink wash, none |
 | B / P / F / Space | birds / details / frame / slow turn |
 

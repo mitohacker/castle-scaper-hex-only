@@ -13,6 +13,8 @@ if not defined GODOT (
   exit /b 1
 )
 
+echo Updating the class cache (new scripts are only known to Godot after an import pass)...
+start "" /wait "%GODOT%" --headless --import --path "%cd%"
 echo Launching Castle Scaper Hex from %cd%
 echo   Click to put a block, right-click to take one away, pick a colour below.
 echo   Towers, roofs, battlements, gates and courtyards come out of what is around each block.

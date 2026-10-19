@@ -25,7 +25,7 @@ extends RefCounted
 ## The previous plan is only read, never changed (the editor keeps showing it while the worker builds).
 
 const Q := 0.001            # lattice of the plan (m)
-const SNAP := 0.02          # vertices closer than this are one vertex (features smaller than this do not exist)
+const SNAP := 0.035         # vertices closer than this are one vertex (features smaller than this do not exist; 2 cm let the regular grid's 2.3 cm slivers through)
 const DELTA := 0.003        # how far from an edge the "which side is solid" probes sit
 const YE := 0.0006          # heights closer than this are one height
 const HC := 1.0             # cell of the layer hash (m): small, so a point query meets few layers
@@ -103,7 +103,8 @@ var se_cids: Array = []                      # per sub-edge: PackedInt64Array, t
 var ledges := {}                             # Vector2i(round(y/Q), +1 up / -1 down) -> Array of from, to pairs
 var lay_wall: Array = []                     # per layer: CFMesh with the wall pieces of the sub-edges it created, or null
 var stats := {}
-var debug := false
+static var debug_default := false           # tools/defect_min.gd turns it on: every plan then prints its unbalanced ledge vertices
+var debug := debug_default
 var open_loops := 0
 var reusable := false                        # may the next plan take things over from this one?
 var cid_index := {}                          # cid -> layer (-2: more than one layer has it)
@@ -766,13 +767,30 @@ func _sub_edges() -> void:
 
 # --- 5. what is solid on each side, at every height --------------------------------------------------
 
+static func _pip(p: Vector2, poly: PackedVector2Array) -> bool:
+	## Is p inside the polygon? (Crossing number. Not Geometry2D.is_point_in_polygon: that triangulates the polygon first, and a polygon
+	## with split vertices along straight runs, which every outline has here, can come out of its triangulator with a gap, so a point
+	## in the middle of a layer was reported outside it and one side of an edge was classified as empty.)
+	var inside := false
+	var n := poly.size()
+	var b := poly[n - 1]
+	for i in n:
+		var a := poly[i]
+		if (a.y > p.y) != (b.y > p.y):
+			var x := a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x)
+			if p.x < x:
+				inside = not inside
+		b = a
+	return inside
+
+
 func _contain(p: Vector2) -> PackedInt32Array:
 	var out := PackedInt32Array()
 	var cand = lay_cells.get(Vector2i(floori(p.x / HC), floori(p.y / HC)))
 	if cand == null:
 		return out
 	for li: int in cand:
-		if (lay_rect[li] as Rect2).has_point(p) and Geometry2D.is_point_in_polygon(p, lay_poly[li]):
+		if (lay_rect[li] as Rect2).has_point(p) and _pip(p, lay_poly[li]):
 			out.append(li)
 	return out
 
@@ -844,7 +862,7 @@ func _side_key(mid: Vector2, src: Array) -> PackedInt32Array:
 					break
 			if own:
 				continue
-			if Geometry2D.is_point_in_polygon(mid, lay_poly[li]):
+			if _pip(mid, lay_poly[li]):
 				extras.append(li)
 	var key := PackedInt32Array()
 	var layers := PackedInt32Array()
@@ -1576,7 +1594,7 @@ func _emit_ledge_level(mesh: CFMesh, y: float, up: bool, arr: Array, pcache: Dic
 		for oi in outers.size():
 			var op: PackedVector2Array = outers[oi]
 			var aa := CFTri.area(op)
-			if aa < best_a and Geometry2D.is_point_in_polygon(probe, op):
+			if aa < best_a and _pip(probe, op):
 				best_a = aa
 				best_o = oi
 		if best_o < 0:
@@ -1588,7 +1606,7 @@ func _emit_ledge_level(mesh: CFMesh, y: float, up: bool, arr: Array, pcache: Dic
 			for oi in outers.size():
 				var op2: PackedVector2Array = outers[oi]
 				var aa2 := CFTri.area(op2)
-				if aa2 < best_a and Geometry2D.is_point_in_polygon(mid, op2):
+				if aa2 < best_a and _pip(mid, op2):
 					best_a = aa2
 					best_o = oi
 		if best_o >= 0:
@@ -1692,8 +1710,15 @@ func _emit_ledge_tri(mesh: CFMesh, y: float, up: bool, nrm: Vector3, a: Vector2,
 	var tan3 := Vector3.RIGHT
 	var bin := nrm.cross(tan3)
 	var area2 := (pb - pa).cross(pc - pa).length()
-	if area2 < 1e-9:
-		return
+	var order := 0
+	var longest := maxf(pa.distance_to(pb), maxf(pb.distance_to(pc), pc.distance_to(pa)))
+	if area2 < 0.003 * longest:
+		# a sliver (a corner of a straight run: its tip is within 3 mm of the chord, collinear in the design, a mm off on the plan's lattice):
+		# kept, and wound as the triangulator made it (counter-clockwise), not as float noise would orient it, because the walls round
+		# the region and the triangles beside it use the edges to its middle point
+		if pa.distance_squared_to(pb) < 1e-10 or pb.distance_squared_to(pc) < 1e-10 or pa.distance_squared_to(pc) < 1e-10:
+			return
+		order = 1 if up else 2
 	var ha := area2 / maxf((pc - pb).length(), 1e-6)
 	var hb := area2 / maxf((pc - pa).length(), 1e-6)
 	var hc := area2 / maxf((pb - pa).length(), 1e-6)
@@ -1705,7 +1730,7 @@ func _emit_ledge_tri(mesh: CFMesh, y: float, up: bool, nrm: Vector3, a: Vector2,
 	var c_b := Vector4(0.0 if r_bc else no, hb if r_ca else no, 0.0 if r_ab else no, no)
 	var c_c := Vector4(0.0 if r_bc else no, 0.0 if r_ca else no, hc if r_ab else no, no)
 	mesh.push_tri3(pa, pb, pc, nrm, nrm, nrm, Vector2(pa.dot(tan3), pa.dot(bin)), Vector2(pb.dot(tan3), pb.dot(bin)), Vector2(pc.dot(tan3), pc.dot(bin)),
-		tan3, 1.0, c_a, c_b, c_c, mesh.flags, nrm)
+		tan3, 1.0, c_a, c_b, c_c, mesh.flags, nrm, order)
 
 
 func _ledge_tag(p: Vector2, cands: PackedInt32Array, ym: float) -> int:
@@ -1714,7 +1739,7 @@ func _ledge_tag(p: Vector2, cands: PackedInt32Array, ym: float) -> int:
 	for li in cands:
 		if p.x < lay_rx0[li] or p.y < lay_rz0[li] or p.x >= lay_rx1[li] or p.y >= lay_rz1[li]:
 			continue
-		if Geometry2D.is_point_in_polygon(p, lay_poly[li]):
+		if _pip(p, lay_poly[li]):
 			here.append(li)
 	return _surface(here, ym)
 

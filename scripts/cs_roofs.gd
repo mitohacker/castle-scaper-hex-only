@@ -309,6 +309,7 @@ static func ridge(sh: Shell, poly_in: PackedVector2Array, ys: float, o: Dictiona
 			h = minf(h, ys + tf[i] + slope * (ni[i].dot(p) - e_line[i]))
 		return h
 	var regions := {}
+	var apexes: Array[Vector2] = []
 	var top := ys
 	for i: int in hip_ids:
 		var r := outer
@@ -326,12 +327,22 @@ static func ridge(sh: Shell, poly_in: PackedVector2Array, ys: float, o: Dictiona
 				break
 		if r.size() < 3 or absf(area2(r)) < 1e-6:
 			continue
+		# the planes of a regular outline all meet in one point, which every region finds with its own rounding: one point for them all
+		for q in r.size():
+			var found_q := false
+			for seen: Vector2 in apexes:
+				if seen.distance_to(r[q]) < 2e-3:
+					r[q] = seen
+					found_q = true
+					break
+			if not found_q:
+				apexes.append(r[q])
 		regions[i] = r
 		planes.append([ni[i], e_line[i], tf[i]])
 		var d_e := (poly[(i + 1) % n] - poly[i]).normalized()
 		var pts: Array = []
 		for p in r:
-			var hh: float = ys + tf[i] + slope * (ni[i].dot(p) - e_line[i])
+			var hh: float = height.call(p)
 			top = maxf(top, hh)
 			pts.append(v3(p, hh))
 		var uvf := func(p3: Vector3) -> Vector2:
@@ -495,7 +506,9 @@ static func pyramid(sh: Shell, poly_in: PackedVector2Array, ys: float, o: Dictio
 			var w0 := pow(1.0 - t, lift_p) * lc[j] + pow(t, lift_p) * lc[(j + 1) % n]
 			var fade := pow(maxf(0.0, 1.0 - pk.x / maxf(lift_u, 0.01)), 1.5)
 			var tf_here := tfc[j] if s == 0 else tfe[j]
-			var q := p0s[idx].lerp(pis[idx], pk.x) + bend * pk.y * pk.y
+			# (the last ring is the inner outline itself, exactly: a lerp to 1.0 can differ from it by a rounding, and the apex of
+			# a pyramid is one point that many triangles share)
+			var q := (pis[idx] if pk.x >= 1.0 else p0s[idx].lerp(pis[idx], pk.x)) + bend * pk.y * pk.y
 			ring.append(v3(q, ys + tf_here * (1.0 - pk.y) + H * pk.y + lift * w0 * fade))
 		rings.append(ring)
 	for idx in total:

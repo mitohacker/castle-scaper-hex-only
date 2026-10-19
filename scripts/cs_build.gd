@@ -20,26 +20,39 @@ extends RefCounted
 const H := 4.0                  # level height (m); a cell is about 4 m across
 const B := 0.6                  # top of the land above the sea (y = 0)
 const FOOT := -1.6              # bottom of the land / footings
-const PT := 0.45                # parapet thickness
+# The sizes that depend on how big a cell is are variables, set from the grid's cell side by `set_scale` (every build does): the values
+# below are for the full-size cells (21.65 m2: a dodecagon of side 1.39 m, a hexagon of side 2.89 m); smaller cells scale them down with the side.
+static var FS := 1.0            # the scale: the cell side over 1.39 m, at most 1
+static var PT := 0.3            # parapet thickness
 const PH := 1.05                # parapet height
 const MERLON_LOW := 0.45
-const NOTCH_W := 0.6
+static var NOTCH_W := 0.45
+static var NOTCH_EXT := 0.2           # how far a notch's cut reaches past the parapet's faces (kept in step with the cell: two cuts at a reflex corner must not meet)
 const NOTCH_STEP := 1.45
+static var CORNER_MARGIN := 0.2      # no notch within this of a corner of a parapet (the cell's side is only 1.39 m)
+static var DOOR_HW := 0.42           # half the width of a door (a side of 1.39 m: 0.28 m of wall each side)
+static var SLIT_HW := 0.08           # half the width of an arrow slit (its edge lies 1.5 cm from the parapet's inner corner on a side: scales with the cell so the two stay welded)
+static var WINDOW_HW := 0.34         # half the width of a window
+static var MIN_SIDE := 1.3           # the shortest side that takes a door, a window or a flight of stairs
 const ROUND_SIDES := 16
-const PINCH := 0.35             # a cell corner shared only with a diagonal block is pulled in this far (m)
-const STUB_BITE := 0.15         # how far a parapet stub reaches into the taller block it ends against
-const ARCH_PIER := 0.3          # the thinnest pier between an arch and the block it springs from (m)
-const ARCH_MIN_W := 0.7         # the narrowest half span worth an arch
-const ARCH_MAX_W := 2.0
+static var STUB_RUN := 0.18          # how far a stub runs past the parapet's inner corner (a side is only 1.39 m)
+static var STUB_BITE := 0.15       # how far a parapet stub reaches into the taller block it ends against
+static var ARCH_PIER := 0.3          # the thinnest pier between an arch and the block it springs from (m)
+static var ARCH_MIN_W := 0.7         # the narrowest half span worth an arch
+static var ARCH_MAX_W := 1.1         # half the widest passage: on the regular grid two arches side by side keep a wall of 0.3 m between them
 const ARCH_BAND := 0.4          # solid band between an arch's crown and the block it carries
 const ARCH_FR := [0.0, 0.35, 0.6, 0.78, 0.91, 1.0]          # stepped arch: heights of the courses (x the rise) ...
 const ARCH_FR_SMALL := [0.0, 0.45, 0.7, 0.87, 1.0]          # ... fewer on narrow arches, so no course is under 4 cm
+const ARCH_FR_TINY := [0.0, 0.5, 1.0]                       # ... and two on the narrowest (smaller cells)
 const CORBEL := [[1.0, 0.0, 0.35], [0.65, 0.35, 0.75], [0.3, 0.75, 1.1]]   # reach out of the wall, top and bottom below the block
-const PILLAR_R := 0.5
+static var PILLAR_R := 0.5
+static var WALL_THICK := 1.9         # a straight wall's thickness (a cell of the full size: 1.9 m; smaller cells, thinner walls)
+const TOWER_RISE := 1.4         # a wall's corner tower stands this much above the wall
+const WALL_OWNER := 100000      # the owner id (CUSTOM1.w - 1) of straight wall i is WALL_OWNER + i, above every grid point
 const STAIR_STEPS := 10         # a flight climbs one level (4 m) in ten steps
-const STAIR_HW := 0.6           # half its width
-const STAIR_MIN_RUN := 2.2
-const GAP_MARGIN := 0.12        # the parapet gap is this much wider than the flight on each side
+static var STAIR_HW := 0.55           # half its width
+static var STAIR_MIN_RUN := 2.2
+static var GAP_MARGIN := 0.08        # the parapet gap is this much wider than the flight on each side
 
 var grid: CSGrid
 var town: CSTown
@@ -47,6 +60,7 @@ var plan: CFPlan
 var mesh := CFMesh.new()
 var caps: Array = []
 var land := {}                  # vertex -> "base" | "passage" | "court"
+var fill := {}                  # triangle cell -> true: the little pit between three cells is filled with land when two of them are land (no hole in the shore)
 var kinds := {}                 # block key -> "tower" | "battle" | "cottage" | "walk" | "flat" (tops only)
 var fills := {}                 # key(v, k) -> arch record: the arch under the block (v, k + 1) fills v's cell at level k
 var pieces := {}                # key of a block with nothing under it -> "arch" | "corbel" | "pillar"
@@ -64,6 +78,31 @@ var _fill_col := {}             # grid points whose column holds an arch
 var _corbel_faces := {}         # block key -> sides with corbels
 var _covered := {}              # key(v, k) * 16 + side -> true: something stands against that side (no opening there)
 var _gaps := {}                 # walk area id -> {loop edge start point: [s0, s1] along that edge}
+
+
+static func set_scale(side: float, cell: float = 1.0) -> void:
+	## The sizes that go with a cell of this side (m): the full-size cells (side 1.39 m or more) have the values above, smaller cells scale the sizes along
+	## their width with the side (heights stay: a level is 4 m whatever the cell).
+	var f := clampf(side / 1.3905934, 0.2, 1.0)
+	FS = f
+	PT = 0.3 * f
+	NOTCH_W = 0.45 * f
+	NOTCH_EXT = maxf(0.2 * f * f, 0.06)
+	CORNER_MARGIN = 0.2 * f
+	DOOR_HW = 0.42 * f
+	WINDOW_HW = 0.34 * f
+	SLIT_HW = 0.08 * f
+	MIN_SIDE = 1.3 * f
+	STUB_RUN = 0.18 * f
+	STUB_BITE = 0.15 * f
+	ARCH_PIER = 0.3 * f
+	ARCH_MIN_W = 0.7 * f
+	ARCH_MAX_W = 1.1 * f
+	PILLAR_R = 0.5 * f
+	STAIR_HW = 0.55 * f
+	STAIR_MIN_RUN = 2.2 * maxf(f, 0.75)
+	GAP_MARGIN = 0.08 * f
+	WALL_THICK = 1.9 * cell
 
 
 static func h01(a: int, b: int = 0, c: int = 0) -> float:
@@ -166,25 +205,12 @@ static func convex(poly: PackedVector2Array) -> bool:
 	return true
 
 
-func outline(v: int, filled: Callable) -> PackedVector2Array:
-	## v's cell at one level: the quad centres round v, except that a centre shared only with a diagonal block (the quad's
-	## opposite corner filled, its two other corners empty) is pulled towards v, so the two blocks stand apart instead of
-	## touching along a single line (Townscaper's corner modules handle that case; here it becomes a narrow gap).
+func outline(v: int) -> PackedVector2Array:
+	## v's cell: the triangle centres round v. Every corner is shared by three mutual neighbours, so no block ever
+	## touches another at only a corner and nothing has to be pulled in.
 	var out := PackedVector2Array()
-	var nb: PackedInt32Array = grid.nbrs[v]
-	var rg: PackedInt32Array = grid.rings[v]
-	var n := nb.size()
-	for i in n:
-		var q := rg[i]
-		var c := grid.centers[q]
-		var opp := -1
-		if grid.fn == 4:                   # the hex grid's corners are shared by three mutual neighbours: never diagonal
-			for kk in 4:
-				if grid.quads[q * 4 + kk] == v:
-					opp = grid.quads[q * 4 + (kk + 2) % 4]
-		if opp >= 0 and filled.call(opp) and not filled.call(nb[i]) and not filled.call(nb[(i + 1) % n]):
-			c += (grid.verts[v] - c).normalized() * PINCH
-		out.append(c)
+	for q in grid.rings[v]:
+		out.append(grid.centers[q])
 	return out
 
 
@@ -231,7 +257,7 @@ func level_outline(v: int, k: int) -> PackedVector2Array:
 		for q in base:
 			out.append(c + (q - c) * f)
 		return out
-	return outline(v, func(u: int) -> bool: return filled(u, k))
+	return outline(v)
 
 
 static func clip_half(poly: PackedVector2Array, o: Vector2, nrm: Vector2, d: float) -> PackedVector2Array:
@@ -263,6 +289,7 @@ func _clear_of(poly: PackedVector2Array, o: Vector2, nrm: Vector2, d: float, mar
 func build(g: CSGrid, t: CSTown, prev: CSBuild = null) -> void:
 	var t0 := Time.get_ticks_usec()
 	grid = g
+	set_scale(g.side, g.cell)
 	town = t
 	plan = CFPlan.new()
 	mesh = CFMesh.new()
@@ -270,6 +297,7 @@ func build(g: CSGrid, t: CSTown, prev: CSBuild = null) -> void:
 	hats.clear()
 	_styled = false
 	land.clear()
+	fill.clear()
 	kinds.clear()
 	fills.clear()
 	pieces.clear()
@@ -283,15 +311,14 @@ func build(g: CSGrid, t: CSTown, prev: CSBuild = null) -> void:
 	_corbel_faces.clear()
 	_covered.clear()
 	_gaps.clear()
-	_find_land()
-	_find_supports()
-	_find_doors()
-	_ground()
-	_bodies()
-	_arches()
-	_tops()
-	_supports()
-	_openings()
+	var split := {}
+	var tl := Time.get_ticks_usec()
+	for step: Array in [["land", _find_land], ["supports", _find_supports], ["doors", _find_doors], ["ground", _ground], ["bodies", _bodies], ["walls", _walls],
+			["arches", _arches], ["tops", _tops], ["supports2", _supports], ["openings", _openings]]:
+		(step[1] as Callable).call()
+		var tn := Time.get_ticks_usec()
+		split[step[0]] = float(tn - tl) / 1000.0
+		tl = tn
 	var t1 := Time.get_ticks_usec()
 	plan.run(mesh, prev.plan if prev != null else null)
 	var t2 := Time.get_ticks_usec()
@@ -301,31 +328,50 @@ func build(g: CSGrid, t: CSTown, prev: CSBuild = null) -> void:
 	for kk: int in pieces:
 		pc[pieces[kk]] = int(pc.get(pieces[kk], 0)) + 1
 	stats = {"blocks": town.size(), "tris": mesh.tri_count(), "layers": plan.layer_count(), "ms": float(Time.get_ticks_usec() - t0) / 1000.0,
-		"ms_rules": float(t1 - t0) / 1000.0, "ms_plan": float(t2 - t1) / 1000.0, "caps": caps.size(), "pieces": pc, "stairs": stairs.size(), "hats": hats.size(), "facades": facades}
+		"ms_rules": float(t1 - t0) / 1000.0, "ms_plan": float(t2 - t1) / 1000.0, "ms_split": split, "caps": caps.size(), "pieces": pc, "stairs": stairs.size(), "hats": hats.size(), "facades": facades}
 
 
 func _find_land() -> void:
-	## Ground blocks and the cells under bridges are land; so is every empty cell the sea cannot reach (a courtyard).
+	## Ground blocks and the cells under bridges are land; so is every empty cell the sea cannot reach (a courtyard). Only the cells in a box round the
+	## town are looked at (everything beyond it is open sea: the box is grown by two cell spacings, an empty margin all round), so a click costs the
+	## same however many small cells the island has.
+	var cols := town.columns()
+	var lo := Vector2.ZERO
+	var hi := Vector2.ZERO
+	for i in cols.size():
+		var p := grid.verts[cols[i]]
+		lo = p if i == 0 else lo.min(p)
+		hi = p if i == 0 else hi.max(p)
+	var margin := Vector2(grid.spacing, grid.spacing) * 2.0
+	var box := grid.points_in_rect(lo - margin, hi + margin)
 	var nv := grid.verts.size()
+	var inb := PackedByteArray()
+	inb.resize(nv)
+	for v in box:
+		inb[v] = 1
 	var sea := PackedByteArray()
 	sea.resize(nv)
 	var stack: Array[int] = []
-	for v in nv:
-		if not grid.buildable(v):
+	for v in box:
+		var edge := not grid.buildable(v) and grid.is_dodecagon(v)     # the sea ring (the little triangles between the blocks are no sea of their own: the sea reaches them from a cell beside)
+		if not edge:
+			for u in grid.nbrs[v]:
+				if inb[u] == 0:
+					edge = true                                         # on the box's rim: beyond it is sea
+					break
+		if edge and not (town.has(v, 0) or top_of(v) >= 1):
 			sea[v] = 1
 			stack.append(v)
-	var blocked := func(v: int) -> bool:
-		return town.has(v, 0) or top_of(v) >= 1
 	var guard := 0
 	while not stack.is_empty() and guard < nv * 8:
 		guard += 1
 		var v: int = stack.pop_back()
 		for u in grid.nbrs[v]:
-			if sea[u] or blocked.call(u):
+			if sea[u] or inb[u] == 0 or town.has(u, 0) or top_of(u) >= 1:
 				continue
 			sea[u] = 1
 			stack.append(u)
-	for v in nv:
+	for v in box:
 		if not grid.buildable(v):
 			continue
 		if town.has(v, 0):
@@ -334,6 +380,23 @@ func _find_land() -> void:
 			land[v] = "passage"
 		elif not sea[v]:
 			land[v] = "court"
+	for t in box:
+		if t < grid.d_count or not grid.is_whole(t):
+			continue
+		var n := 0
+		for u in grid.nbrs[t]:
+			if land.has(u):
+				n += 1
+		if n >= 2:
+			fill[t] = true
+
+
+func land_all() -> Dictionary:
+	## The land of every cell, the filled pits between the cells included (as "fill"): what the shore and the landscape see.
+	var all := land.duplicate()
+	for t: int in fill:
+		all[t] = "fill"
+	return all
 
 
 func _find_supports() -> void:
@@ -374,22 +437,54 @@ func _find_supports() -> void:
 			pieces[kk] = "pillar" if faces.is_empty() else "corbel"
 
 
+func _hangs(v: int, except_k: int) -> bool:
+	## Has column v a block with nothing under it, other than the one at level except_k (a corbel or a pillar will hold it)?
+	for j in range(1, top_of(v) + 1):
+		if j != except_k and town.has(v, j) and not town.has(v, j - 1):
+			return true
+	return false
+
+
+func _mouth_blocked(v: int, k: int, i: int, j: int, s: Vector2, tc: float, w: float) -> bool:
+	## Does a block hang beside the passage's mouth? The passage runs through the sides the strip |along s - tc| <= w crosses (the open
+	## ones: the abutments are sides i and j); a neighbour there with a block that hangs (at any level: the plan splits every outline at every
+	## other's corners whatever their heights) gets corbels whose corners fall next to the passage's edges where they cross the shared side,
+	## and the two meet along a vertical line or leave a crack.
+	var kf := k - 1
+	var nb: PackedInt32Array = grid.nbrs[v]
+	var p := grid.verts[v]
+	var c := p + s * tc
+	for m in nb.size():
+		if m == i or m == j:
+			continue
+		var u := nb[m]
+		if not _hangs(u, -1):
+			continue
+		var f := grid.face(v, m)
+		var d0 := (f[0] - c).dot(s)
+		var d1 := (f[1] - c).dot(s)
+		if minf(absf(d0), absf(d1)) <= w + 0.3 or (d0 < 0.0) != (d1 < 0.0):
+			return true
+	return false
+
+
 func _arch_fit(v: int, k: int) -> Dictionary:
 	## The arch under block (v, k): two neighbours on opposite-ish sides with blocks at level k - 1 (its abutments) and
-	## room between them. Read from the blocks and the cell as the grid made it (the corners of an abutment side are
-	## never pinched: the abutment fills one of the two cells beside them), so it does not depend on other arches.
+	## room between them. Read from the blocks and the cell as the grid made it, so it does not depend on other arches.
 	## Pairs whose arch opens on both sides win, then the most opposite.
 	var kf := k - 1
+	if _hangs(v, k):
+		return {}                       # another block of the column hangs too: its corbels and the arch's passage would share the cell's sides
 	var nb: PackedInt32Array = grid.nbrs[v]
 	var n := nb.size()
 	var p := grid.verts[v]
 	var best := {}
 	var best_score := -INF
 	for i in n:
-		if not town.has(nb[i], kf):
-			continue
+		if not town.has(nb[i], kf) or (kf >= 1 and not town.has(nb[i], kf - 1)):
+			continue                    # (an abutment that hangs itself has corbels of its own where the arch springs)
 		for j in range(i + 1, n):
-			if not town.has(nb[j], kf):
+			if not town.has(nb[j], kf) or (kf >= 1 and not town.has(nb[j], kf - 1)):
 				continue
 			var dd := (grid.verts[nb[i]] - p).normalized().dot((grid.verts[nb[j]] - p).normalized())
 			if dd > -0.4:
@@ -414,6 +509,8 @@ func _arch_fit(v: int, k: int) -> Dictionary:
 			var w := (tj - ti) * 0.5 - ARCH_PIER
 			if w < ARCH_MIN_W:
 				continue
+			if _mouth_blocked(v, k, i, j, s, (ti + tj) * 0.5, minf(w, ARCH_MAX_W)):
+				continue
 			best_score = score
 			best = {"i": i, "j": j, "s": s, "tc": (ti + tj) * 0.5, "w": minf(w, ARCH_MAX_W), "open": open_a or open_b}
 	return best
@@ -431,7 +528,7 @@ func _find_doors() -> void:
 		if town.style(v, 0) != CSStyle.CASTLE:
 			var best := -1.0
 			for i in nb.size():
-				if filled(nb[i], 0) or ol[(i + nb.size() - 1) % nb.size()].distance_to(ol[i]) < 2.6:
+				if filled(nb[i], 0) or ol[(i + nb.size() - 1) % nb.size()].distance_to(ol[i]) < MIN_SIDE:
 					continue
 				var score := h01(v, i, 8) + (1.0 if land.has(nb[i]) else 0.0)
 				if score > best:
@@ -442,11 +539,18 @@ func _find_doors() -> void:
 			var u := nb[i]
 			if filled(u, 0):
 				continue
-			if not rnd and ol[(i + nb.size() - 1) % nb.size()].distance_to(ol[i]) < 2.6:
+			if not rnd and ol[(i + nb.size() - 1) % nb.size()].distance_to(ol[i]) < MIN_SIDE:
 				continue
 			if land.has(u) and h01(v, i, 7) < 0.85:
 				doors[v] = i
 				break
+
+
+static func _arch_courses(w: float) -> Array:
+	## The heights of an arch's courses (x the rise): the narrower the arch the fewer, so none is a few cm thick.
+	if w >= 1.3:
+		return ARCH_FR
+	return ARCH_FR_SMALL if w >= 0.8 else ARCH_FR_TINY
 
 
 func _arches() -> void:
@@ -487,7 +591,7 @@ func _arch(v: int, kf: int, a: Dictionary) -> void:
 	# every side line of the cut keeps clear of the fill's corners (the plan merges points 2 cm apart)
 	var clear := false
 	for _try in 8:
-		var fr: Array = ARCH_FR_SMALL if w < 1.3 else ARCH_FR
+		var fr: Array = _arch_courses(w)
 		clear = true
 		for m in fr.size() - 1:
 			var hw := w * sqrt(maxf(1.0 - float(fr[m]) * float(fr[m]), 0.0))
@@ -499,7 +603,7 @@ func _arch(v: int, kf: int, a: Dictionary) -> void:
 		w -= 0.07
 	if not clear or w < ARCH_MIN_W - 0.2:
 		return
-	var frs: Array = ARCH_FR_SMALL if w < 1.3 else ARCH_FR
+	var frs: Array = _arch_courses(w)
 	var crown := y1 - ARCH_BAND
 	var rv := minf(w, 1.8)
 	var spring := crown - rv
@@ -523,15 +627,18 @@ func _supports() -> void:
 func _corbel(v: int, k: int, i: int) -> void:
 	## A stepped corbel under what fills (v, k) (a block, or an arch's fill) on its side i, where the wall of the
 	## neighbour one level down bears it: three courses, each reaching less far out of that wall, clipped from the
-	## outline of what it holds (its walls run on down). Its back is that wall's own face: where the wall's corner is
-	## pinched (a diagonal block at that level), the face leans a few degrees off the cell's side, and a corbel built on
-	## the side would leave a sliver of air whose tip is a line two solids touch along.
+	## outline of what it holds (its walls run on down). Its back is that wall's own face, which a corbel built on the
+	## cell's side must meet flush: a sliver of air would leave a tip that is a line two solids touch along.
 	var ol := level_outline(v, k)
 	var n := ol.size()
 	var a := ol[(i + n - 1) % n]
 	var b := ol[i]
 	var dir := (b - a).normalized()
 	var nin := Vector2(-dir.y, dir.x)
+	var dprev := (a - ol[(i + n - 2) % n]).normalized()
+	var dnext := (ol[(i + 1) % n] - b).normalized()
+	var nprev := Vector2(-dprev.y, dprev.x)
+	var nnext := Vector2(-dnext.y, dnext.x)
 	var u: int = grid.nbrs[v][i]
 	var iu := grid.index_of(u, v)
 	var olu := level_outline(u, k - 1)
@@ -559,6 +666,10 @@ func _corbel(v: int, k: int, i: int) -> void:
 			break
 		last = r
 		var poly := clip_half(ol, a, nin, r)
+		# only its own side's wedge: where two sides' courses meet at a corner they share the bisector line instead of
+		# overlapping, so no two courses cross inside the cell
+		poly = clip_half(poly, a, nin - nprev, 0.0)
+		poly = clip_half(poly, b, nin - nnext, 0.0)
 		if aa != a or bb != b:
 			# the back from the wall's own corners: a, aa, bb, b in place of the side a -> b
 			var ia := poly.find(a)
@@ -599,7 +710,7 @@ func _pillar(v: int, k: int) -> void:
 	var p := grid.verts[v]
 	var y_top := level_y(k)
 	var y_bot := B
-	var floor_ol := outline(v, func(u: int) -> bool: return land.has(u))
+	var floor_ol := outline(v)
 	for kb in range(k - 2, -1, -1):
 		if town.has(v, kb):
 			y_bot = level_y(kb + 1)
@@ -610,10 +721,21 @@ func _pillar(v: int, k: int) -> void:
 		for i in poly.size():
 			room = minf(room, Geometry2D.get_closest_point_to_segment(p, poly[i], poly[(i + 1) % poly.size()]).distance_to(p))
 	var lim := room - 0.15              # no corner of the pillar nearer than this to a side of the cells it joins
-	var r := clampf(room - 0.45, 0.25, PILLAR_R)
-	var rc := minf(r + 0.25, lim)
-	var rb := minf(r + 0.15, lim)
+	var r := clampf(room - 0.6, 0.2, PILLAR_R)     # (a pillar on a small cell: not as wide as the room, a parapet round the walk below is 0.45 thick)
 	var rnd := h01(v, k, 21) < 0.55
+	var rb := minf(r + 0.15, lim)
+	# the base and the shaft stand on the walk below, inside its parapet, whose inner face is PT inside the cell's sides: on a small cell a
+	# pillar of just that radius would touch it along a line, so those two stay 0.1 m clear of it
+	var inner_line := room - PT
+	var eff := func(rad: float) -> float:
+		return rad if rnd else minf(rad * 1.25, lim)
+	for _t in 3:
+		if absf(eff.call(r) - inner_line) < 0.1:
+			r = r + 0.12 if r >= inner_line else maxf(r - 0.12, 0.1)
+		if absf(eff.call(rb) - inner_line) < 0.1:
+			rb = rb + 0.12 if rb >= inner_line else maxf(rb - 0.12, 0.1)
+	rb = minf(maxf(rb, r), lim)
+	var rc := minf(maxf(r + 0.25, rb), lim)
 	var rot := (grid.verts[grid.nbrs[v][0]] - p).angle()
 	var sty := town.style(v, k)
 	var pz := CFMesh.Z_STONE if sty == CSStyle.CASTLE else CSStyle.trim_zone(sty)
@@ -637,8 +759,12 @@ func _ground() -> void:
 	for v: int in land:
 		var st := plan.new_stack(CFPlan.OP_ADD, 10000 + v, {"zone": CFMesh.Z_RUBBLE, "top_zone": CFMesh.Z_FLAG, "seed": h01(v, 9),
 			"owner": v + 1, "prio": 2, "label": "land"})
-		for poly: PackedVector2Array in polys_of(v, outline(v, func(u: int) -> bool: return land.has(u))):
+		for poly: PackedVector2Array in polys_of(v, outline(v)):
 			plan.add_layer(st, poly, FOOT, B)
+	for t: int in fill:
+		var st2 := plan.new_stack(CFPlan.OP_ADD, 10000 + t, {"zone": CFMesh.Z_RUBBLE, "top_zone": CFMesh.Z_FLAG, "seed": h01(t, 9),
+			"owner": t + 1, "prio": 2, "label": "land"})
+		plan.add_layer(st2, outline(t), FOOT, B)
 
 
 func _bodies() -> void:
@@ -674,6 +800,291 @@ func _bodies() -> void:
 			for poly: PackedVector2Array in polys:
 				plan.add_layer(st, poly, y0, level_y(k1 + 1))
 			k = k1 + 1
+
+
+static func wall_ends(_g: CSGrid, w: Dictionary) -> PackedVector2Array:
+	## A straight wall's axis: where it starts, and the point `len` metres along its heading.
+	var a := Vector2(float(w.x), float(w.z))
+	return PackedVector2Array([a, a + Vector2.from_angle(deg_to_rad(float(w.deg))) * float(w.len)])
+
+
+static func wall_poly(g: CSGrid, w: Dictionary) -> PackedVector2Array:
+	## Its footprint, a rectangle as wide as the wall, counter-clockwise.
+	var e := wall_ends(g, w)
+	var dir := (e[1] - e[0]).normalized()
+	var nrm := Vector2(-dir.y, dir.x) * (float(w.w) * 0.5)
+	return PackedVector2Array([e[0] - nrm, e[1] - nrm, e[1] + nrm, e[0] + nrm])
+
+
+func _walls() -> void:
+	## The straight walls of the town: each a footing and a body one level high (one rectangle each, whatever cells it crosses: they are not
+	## blocks, no rule of the cells applies), and one parapet round the top of all of them together: along the boundary of the walls' union,
+	## so where two walls meet or cross the parapet runs round the joint and not across the walk, and a ring of walls has an inner parapet too.
+	var nw := town.walls.size()
+	if nw == 0:
+		return
+	CSWalls.normalize(town, grid)
+	var walls := CSWalls.robust(town.walls)       # (a hair longer where two outlines would pass within millimetres of each other)
+	nw = walls.size()
+	var y0 := level_y(0)
+	var y1 := level_y(1)
+	var rects: Array = []
+	var rect_wall: Array = []           # per rect: the wall it belongs to (the fills of the corners belong to one of the two walls)
+	for i in nw:
+		var w: Dictionary = walls[i]
+		var poly := wall_poly(grid, w)
+		var e := wall_ends(grid, w)
+		var owner := WALL_OWNER + i + 1
+		var c := int(w.c)
+		var g := 90001 + i
+		plan.add_layer(plan.new_stack(CFPlan.OP_ADD, g, {"zone": CFMesh.Z_RUBBLE, "top_zone": CFMesh.Z_FLAG, "seed": h01(i, 9, 77), "owner": owner, "prio": 2,
+			"label": "land"}), poly, FOOT, B)
+		plan.add_layer(plan.new_stack(CFPlan.OP_ADD, g, {"zone": CFMesh.Z_STONE, "top_zone": CFMesh.Z_FLAG, "seed": colour_seed(c), "owner": owner, "prio": 10,
+			"anchor": Vector3(e[0].x, y0, e[0].y), "label": "wall"}), poly, y0, y1)
+		rects.append(poly)
+		rect_wall.append(i)
+		extras.append({"poly": poly, "y0": y0, "y1": y1 + PH})
+	# the corners: a wedge filled where two walls meet at a sharp angle, a round tower on every end and bend (CSWallJoints)
+	var joints := CSWallJoints.compute(walls, CSWalls.thickness(grid))
+	var fk := 0
+	for f: Dictionary in joints.fills:
+		var wi: int = f.wi
+		var fp: PackedVector2Array = f.poly
+		var c := int((town.walls[wi] as Dictionary).c)
+		var g := 92000 + fk
+		fk += 1
+		plan.add_layer(plan.new_stack(CFPlan.OP_ADD, g, {"zone": CFMesh.Z_RUBBLE, "top_zone": CFMesh.Z_FLAG, "seed": h01(fk, 9, 78), "owner": WALL_OWNER + wi + 1, "prio": 2,
+			"label": "land"}), fp, FOOT, B)
+		plan.add_layer(plan.new_stack(CFPlan.OP_ADD, g, {"zone": CFMesh.Z_STONE, "top_zone": CFMesh.Z_FLAG, "seed": colour_seed(c), "owner": WALL_OWNER + wi + 1, "prio": 10,
+			"anchor": Vector3(fp[0].x, y0, fp[0].y), "label": "wall"}), fp, y0, y1)
+		rects.append(fp)
+		rect_wall.append(wi)
+		extras.append({"poly": fp, "y0": y0, "y1": y1 + PH})
+	var tower_at: Array = []
+	for ti in joints.towers.size():
+		var tw: Dictionary = joints.towers[ti]
+		_wall_tower(ti, tw)
+		tower_at.append([tw.c, float(tw.r)])
+	var g := 90000
+	var stacks := {}
+	var cut := plan.new_stack(CFPlan.OP_CUT, g, {"owner": WALL_OWNER + 1, "label": "notch"})
+	for lp: Dictionary in _wall_loops(rects):
+		var pts: PackedVector2Array = lp.pts
+		var owners: Array = lp.owners
+		var n := pts.size()
+		var inner := PackedVector2Array()
+		for i in n:
+			var a := pts[(i + n - 1) % n]
+			var b := pts[i]
+			var c2 := pts[(i + 1) % n]
+			var d0 := (b - a).normalized()
+			var d1 := (c2 - b).normalized()
+			var n0 := Vector2(-d0.y, d0.x) * PT
+			var n1 := Vector2(-d1.y, d1.x) * PT
+			var den := d0.cross(d1)
+			var q := b + (n0 + n1).normalized() * PT
+			if absf(den) > 0.05:
+				q = (a + n0) + d0 * ((b + n1) - (a + n0)).cross(d1) / den
+				if q.distance_to(b) > PT * 3.0:
+					q = b + (n0 + n1).normalized() * PT
+			inner.append(q)
+		var corner := PackedByteArray()
+		corner.resize(n)
+		for i in n:
+			var d0 := (pts[i] - pts[(i + n - 1) % n]).normalized()
+			var d1 := (pts[(i + 1) % n] - pts[i]).normalized()
+			corner[i] = 1 if absf(d0.angle_to(d1)) > 0.35 else 0
+		for i in n:
+			var wi: int = rect_wall[int(owners[i])]
+			if not stacks.has(wi):
+				var wc := int((town.walls[wi] as Dictionary).c)
+				var e := wall_ends(grid, walls[wi])
+				stacks[wi] = plan.new_stack(CFPlan.OP_ADD, g, {"zone": CFMesh.Z_STONE, "top_zone": CFMesh.Z_STONE, "seed": colour_seed(wc), "owner": WALL_OWNER + wi + 1,
+					"prio": 11, "anchor": Vector3(e[0].x, y0, e[0].y), "label": "battlement"})
+			var a := pts[i]
+			var b := pts[(i + 1) % n]
+			_parapet_piece(stacks[wi], a, b, inner[(i + 1) % n], inner[i], y1)
+			# a notch in the middle of each stretch of straight parapet, clear of the corners
+			var len := a.distance_to(b)
+			var dir := (b - a) / maxf(len, 1e-6)
+			var nrm := Vector2(-dir.y, dir.x)
+			var lo := 0.08 + NOTCH_W * 0.5 + (0.5 if corner[i] else 0.0)
+			var hi := len - 0.08 - NOTCH_W * 0.5 - (0.5 if corner[(i + 1) % n] else 0.0)
+			if hi < lo:
+				continue
+			var count := maxi(1, int((hi - lo) / NOTCH_STEP) + 1)
+			for j in count:
+				var sj := lo + (hi - lo) * (float(j) + 0.5) / float(count)
+				var near_tower := false
+				for tq: Array in tower_at:
+					if (a + dir * sj).distance_to(tq[0]) < float(tq[1]) + NOTCH_W:
+						near_tower = true        # a notch would cut into the tower
+				if near_tower:
+					continue
+				var nc := a + dir * sj + nrm * PT * 0.5
+				if _over_block(nc, dir, nrm):
+					continue                     # the wall runs through a block there: its parapet is inside the block, a notch would cut the block
+				plan.add_layer(cut, CFShapes.rect(a + dir * sj + nrm * PT * 0.5, dir, NOTCH_W * 0.5, PT * 0.5 + 0.2), y1 + MERLON_LOW, y1 + PH + 0.3)
+
+
+func _over_block(c: Vector2, dir: Vector2, nrm: Vector2) -> bool:
+	## Does the notch at c (its rectangle with 15 cm to spare) touch a cell with a block on the ground level?
+	var r := NOTCH_W * 0.5 + 0.15
+	var q := PT * 0.5 + 0.35
+	for o: Vector2 in [Vector2.ZERO, dir * r, -dir * r, nrm * q, -nrm * q, dir * r + nrm * q, dir * r - nrm * q, -dir * r + nrm * q, -dir * r - nrm * q]:
+		var v := grid.nearest(c + o, false)
+		if v >= 0 and town.has(v, 0):
+			return true
+	return false
+
+
+func _wall_tower(ti: int, tw: Dictionary) -> void:
+	## A tower on a wall's end or a bend: its footing, a body a little above the walls, and battlements round the top (round when it is one
+	## round tower, a polygon when two towers that stood close became one).
+	var wi: int = tw.wi
+	var wall: Dictionary = town.walls[wi]
+	var c := int(wall.c)
+	var centre: Vector2 = tw.c
+	var owner := WALL_OWNER + wi + 1
+	var y0 := level_y(0)
+	var yt := level_y(1) + TOWER_RISE
+	var poly: PackedVector2Array = tw.pts
+	var rnd: bool = tw.round
+	var g := 93000 + ti
+	plan.add_layer(plan.new_stack(CFPlan.OP_ADD, g, {"zone": CFMesh.Z_RUBBLE, "top_zone": CFMesh.Z_FLAG, "seed": h01(ti, 9, 79), "owner": owner, "prio": 2,
+		"label": "land"}), poly, FOOT, B)
+	var info := {"zone": CFMesh.Z_STONE, "top_zone": CFMesh.Z_FLAG, "seed": colour_seed(c), "owner": owner, "prio": 10,
+		"anchor": Vector3(centre.x, y0, centre.y), "label": "block"}
+	if rnd:
+		info["round"] = true
+		info["center"] = centre
+		info["radius"] = float(tw.r)
+		info["flags"] = CFMesh.F_ROUND
+	plan.add_layer(plan.new_stack(CFPlan.OP_ADD, g, info), poly, y0, yt)
+	_ring_top(g + 1000, owner, c, centre, yt, level_y(1), poly, rnd)
+	extras.append({"poly": poly, "y0": y0, "y1": yt + PH})
+
+
+func _wall_loops(rects: Array) -> Array:
+	## The boundary of the union of counter-clockwise convex polygons, as loops (counter-clockwise round the walls, clockwise round a hole), each
+	## edge with the polygon it comes from: {pts, owners}. Every polygon's edges are cut where the others cross them, a piece inside another polygon
+	## is dropped, a piece two polygons share is kept once (or not at all where they lie on its two sides), the rest is chained up.
+	var eps := 2e-3
+	var segs: Array = []                # [a, b, owner]
+	var nr := rects.size()
+	for ri in nr:
+		var poly: PackedVector2Array = rects[ri]
+		var m := poly.size()
+		for ei in m:
+			var p0 := poly[ei]
+			var p1 := poly[(ei + 1) % m]
+			var d := p1 - p0
+			var l2 := d.length_squared()
+			var ts := [0.0, 1.0]
+			for rj in nr:
+				if rj == ri:
+					continue
+				var o: PackedVector2Array = rects[rj]
+				for ej in o.size():
+					var q0 := o[ej]
+					var q1 := o[(ej + 1) % o.size()]
+					var x = Geometry2D.segment_intersects_segment(p0, p1, q0, q1)
+					if x != null:
+						ts.append((x - p0).dot(d) / l2)
+					for q: Vector2 in [q0, q1]:
+						var t := (q - p0).dot(d) / l2
+						if t > 0.0 and t < 1.0 and (p0 + d * t).distance_to(q) < eps:
+							ts.append(t)
+			ts.sort()
+			for ti in ts.size() - 1:
+				var ta: float = ts[ti]
+				var tb: float = ts[ti + 1]
+				if (tb - ta) * sqrt(l2) < eps:
+					continue
+				var a := p0 + d * ta
+				var b := p0 + d * tb
+				var mid := (a + b) * 0.5
+				var keep := true
+				for rj in nr:
+					if rj == ri:
+						continue
+					var o: PackedVector2Array = rects[rj]
+					var inside := true
+					var on_edge := -1
+					for ej in o.size():
+						var q0 := o[ej]
+						var q1 := o[(ej + 1) % o.size()]
+						var dist := (q1 - q0).cross(mid - q0) / maxf(q0.distance_to(q1), 1e-9)
+						if dist < -eps:
+							inside = false
+							break
+						if dist < eps:
+							on_edge = ej
+					if not inside:
+						continue
+					if on_edge < 0:
+						keep = false              # strictly inside another polygon
+						break
+					# on the other polygon's edge: the same direction means both lie on one side (keep one copy), the opposite that they touch
+					var q0 := o[on_edge]
+					var q1 := o[(on_edge + 1) % o.size()]
+					if (q1 - q0).dot(d) > 0.0:
+						if rj < ri:
+							keep = false
+							break
+					else:
+						keep = false
+						break
+				if keep:
+					segs.append([a, b, ri])
+	# chain the pieces into loops (a piece starts where the last one ended, within 3 mm: found through cells of 1 cm and their neighbours)
+	var cell_of := func(p: Vector2) -> Vector2i:
+		return Vector2i(floori(p.x * 100.0), floori(p.y * 100.0))
+	var starts := {}
+	for si in segs.size():
+		var k: Vector2i = cell_of.call(segs[si][0])
+		if not starts.has(k):
+			starts[k] = []
+		(starts[k] as Array).append(si)
+	var used := PackedByteArray()
+	used.resize(segs.size())
+	var loops: Array = []
+	for si0 in segs.size():
+		if used[si0]:
+			continue
+		var pts := PackedVector2Array()
+		var owners: Array = []
+		var si := si0
+		var guard := 0
+		while si >= 0 and guard < 10000:
+			guard += 1
+			used[si] = 1
+			pts.append(segs[si][0])
+			owners.append(int(segs[si][2]))
+			var tail: Vector2 = segs[si][1]
+			if tail.distance_to(segs[si0][0]) < 3e-3:
+				break
+			var nxt := -1
+			var kc: Vector2i = cell_of.call(tail)
+			for dx in range(-1, 2):
+				for dy in range(-1, 2):
+					for cand: int in starts.get(Vector2i(kc.x + dx, kc.y + dy), []):
+						if not used[cand] and (segs[cand][0] as Vector2).distance_to(tail) < 3e-3:
+							nxt = cand
+			si = nxt
+		# drop the points where the loop does not turn (two collinear pieces make one edge)
+		var cp := PackedVector2Array()
+		var co: Array = []
+		var n := pts.size()
+		for i in n:
+			var d0 := pts[i] - pts[(i + n - 1) % n]
+			var d1 := pts[(i + 1) % n] - pts[i]
+			if absf(d0.cross(d1)) > 1e-4 * d0.length() * d1.length() or d0.dot(d1) < 0.0:
+				cp.append(pts[i])
+				co.append(owners[i])
+		if cp.size() >= 3:
+			loops.append({"pts": cp, "owners": co})
+	return loops
 
 
 func _tops() -> void:
@@ -784,12 +1195,13 @@ func _parapet_piece(st: int, pa: Vector2, pb: Vector2, ib: Vector2, ia: Vector2,
 func _ring_battlement(v: int, k: int, outer: PackedVector2Array, rnd: bool) -> void:
 	## Battlements round a lone tower's top (every side is open): the outline and its inset by PT, one piece per side,
 	## a notch in every other side (in each side long enough when it is not round).
-	var c := town.colour(v, k)
-	var p := grid.verts[v]
-	var y0 := level_y(k + 1)
-	var g := 60000 + v
-	var info := {"zone": CFMesh.Z_STONE, "top_zone": CFMesh.Z_STONE, "seed": colour_seed(c), "owner": v + 1, "prio": 11,
-		"anchor": Vector3(p.x, level_y(k), p.y), "label": "battlement"}
+	_ring_top(60000 + v, v + 1, town.colour(v, k), grid.verts[v], level_y(k + 1), level_y(k), outer, rnd)
+
+
+func _ring_top(g: int, owner: int, c: int, p: Vector2, y0: float, y_anchor: float, outer: PackedVector2Array, rnd: bool) -> void:
+	## The battlements of _ring_battlement for any round or polygon top: stack group g, owner id, colour c, middle p, the top at y0.
+	var info := {"zone": CFMesh.Z_STONE, "top_zone": CFMesh.Z_STONE, "seed": colour_seed(c), "owner": owner, "prio": 11,
+		"anchor": Vector3(p.x, y_anchor, p.y), "label": "battlement"}
 	if rnd:
 		info["round"] = true
 		info["center"] = p
@@ -813,16 +1225,16 @@ func _ring_battlement(v: int, k: int, outer: PackedVector2Array, rnd: bool) -> v
 		inner.append(q)
 	for i in n:
 		_parapet_piece(st, outer[i], outer[(i + 1) % n], inner[(i + 1) % n], inner[i], y0)
-	var cut := plan.new_stack(CFPlan.OP_CUT, g, {"owner": v + 1, "label": "notch"})
+	var cut := plan.new_stack(CFPlan.OP_CUT, g, {"owner": owner, "label": "notch"})
 	for i in n:
 		var a := outer[i]
 		var b := outer[(i + 1) % n]
 		var len := a.distance_to(b)
-		if (rnd and i % 2 == 1) or (not rnd and len < NOTCH_W + 1.2):
+		if i % 2 == 1 or (not rnd and len < NOTCH_W + 0.5):    # every other side: a side is 1.39 m
 			continue
 		var dir := (b - a) / len
 		var centre := (a + b) * 0.5 + Vector2(-dir.y, dir.x) * PT * 0.5
-		plan.add_layer(cut, CFShapes.rect(centre, dir, minf(NOTCH_W * 0.5, len * 0.3), PT * 0.5 + 0.2), y0 + MERLON_LOW, y0 + PH + 0.3)
+		plan.add_layer(cut, CFShapes.rect(centre, dir, minf(NOTCH_W * 0.5, len * 0.3), PT * 0.5 + NOTCH_EXT), y0 + MERLON_LOW, y0 + PH + 0.3)
 
 
 func _walk_loops(area: Array, k: int) -> Array:
@@ -896,8 +1308,8 @@ static func _stub_ext(lp: Dictionary, i: int) -> Vector2:
 	var a := pts[i]
 	var b := pts[(i + 1) % n]
 	var dir := (b - a) / maxf(a.distance_to(b), 1e-6)
-	var ls := maxf((inner[i] - a).dot(dir), 0.0) + PT if opens[(i + n - 1) % n] else 0.0
-	var le := maxf((b - inner[(i + 1) % n]).dot(dir), 0.0) + PT if opens[(i + 1) % n] else 0.0
+	var ls := maxf((inner[i] - a).dot(dir), 0.0) + STUB_RUN if opens[(i + n - 1) % n] else 0.0
+	var le := maxf((b - inner[(i + 1) % n]).dot(dir), 0.0) + STUB_RUN if opens[(i + 1) % n] else 0.0
 	return Vector2(ls, le)
 
 
@@ -933,9 +1345,8 @@ func _walk_battlements(area: Dictionary) -> void:
 				continue
 			# an edge against a taller block: where the open parapet meets it, a stub one parapet thick runs along it, so
 			# the battlement presses on the block's face (two solids meeting at a single line would not be manifold)
-			# The taller block's face is not always on this edge: a corner it shares only diagonally with another block is
-			# pinched in (outline()), so its face leans up to ~5 degrees away. The stub's wall side therefore slants from the
-			# loop corner into the block by STUB_BITE, and the two solids overlap instead of touching along one line.
+			# The stub's wall side slants from the loop corner into the block by STUB_BITE, so the two solids overlap
+			# instead of touching along one line.
 			var len := a.distance_to(b)
 			var dir := (b - a) / maxf(len, 1e-6)
 			var nrm := Vector2(-dir.y, dir.x) * PT
@@ -978,18 +1389,18 @@ func _walk_battlements(area: Dictionary) -> void:
 				var gp: Array = gaps[a]
 				var s0: float = gp[0]
 				var s1: float = gp[1]
-				plan.add_layer(gap_cut, CFShapes.rect(a + dir * ((s0 + s1) * 0.5) + nrm * PT * 0.5, dir, (s1 - s0) * 0.5, PT * 0.5 + 0.2),
+				plan.add_layer(gap_cut, CFShapes.rect(a + dir * ((s0 + s1) * 0.5) + nrm * PT * 0.5, dir, (s1 - s0) * 0.5, PT * 0.5 + NOTCH_EXT),
 					y0, y0 + PH + 0.3)
 				continue
-			var lo := 0.08 + NOTCH_W * 0.5 + (0.5 if corner[i] else 0.0)
-			var hi := len - 0.08 - NOTCH_W * 0.5 - (0.5 if corner[(i + 1) % n] else 0.0)
+			var lo := 0.08 * FS + NOTCH_W * 0.5 + (CORNER_MARGIN if corner[i] else 0.0)
+			var hi := len - 0.08 * FS - NOTCH_W * 0.5 - (CORNER_MARGIN if corner[(i + 1) % n] else 0.0)
 			if hi < lo:
 				continue
 			var count := maxi(1, int((hi - lo) / NOTCH_STEP) + 1)
 			for j in count:
 				var s := lo + (hi - lo) * (float(j) + 0.5) / float(count)
 				var centre := a + dir * s + nrm * PT * 0.5
-				plan.add_layer(cut, CFShapes.rect(centre, dir, NOTCH_W * 0.5, PT * 0.5 + 0.2), y0 + MERLON_LOW, y0 + PH + 0.3)
+				plan.add_layer(cut, CFShapes.rect(centre, dir, NOTCH_W * 0.5, PT * 0.5 + NOTCH_EXT), y0 + MERLON_LOW, y0 + PH + 0.3)
 
 
 # --- stairs ----------------------------------------------------------------------------------------
@@ -1073,27 +1484,36 @@ func _loop_edge(area: Dictionary, start: Vector2, owner: int) -> Dictionary:
 
 
 static func _ray_in(ol: PackedVector2Array, lim: PackedFloat32Array, q: Vector2, d: Vector2) -> float:
-	## How far q can move along d and stay at least lim[i] inside every side i (ol[i - 1] -> ol[i]) of a convex
-	## counter-clockwise outline (0 when it starts outside): the half-planes themselves, so a margin wider than a narrow
-	## cell cannot turn an inset outline inside out.
-	var best := INF
+	## How far q can move along d and stay inside a convex counter-clockwise outline and at least lim[i] away from every side i
+	## (ol[i - 1] -> ol[i]) that has a margin (0 when it starts too close). The distance is to the side itself, not to its line: on a cell
+	## with obtuse corners (a dodecagon's are 150 degrees) the next side leads away from the flight, and its line would wrongly rule
+	## out the start next to the corner.
 	var n := ol.size()
-	for i in n:
-		var e0 := ol[(i + n - 1) % n]
-		var de := (ol[i] - e0).normalized()
-		var f0 := de.cross(q - e0) - lim[i]
-		var fd := de.cross(d)
-		if f0 < -1e-4:
-			return 0.0
-		if fd < -1e-9:
-			best = minf(best, f0 / -fd)
-	return best
+	var t := 0.0
+	var last := 0.0
+	while t <= 8.0:
+		var p := q + d * t
+		var ok_here := true
+		for i in n:
+			var e0 := ol[(i + n - 1) % n]
+			var e1 := ol[i]
+			if (e1 - e0).cross(p - e0) < -1e-4 * (e1 - e0).length():
+				ok_here = false
+				break
+			if lim[i] > 0.0 and Geometry2D.get_closest_point_to_segment(p, e0, e1).distance_to(p) < lim[i] - 1e-4:
+				ok_here = false
+				break
+		if not ok_here:
+			return last if t > 0.0 else 0.0
+		last = t
+		t += 0.02
+	return last
 
 
 func _stair_fit(c: int, u: int, kl: int, low: Dictionary, up: Dictionary) -> Dictionary:
 	## A flight on cell c's floor (the top of its walk at level kl, or the courtyard when kl = -1) climbing straight up to
-	## the walk of u at level kl + 1, its top step against u's side. {} when it does not fit: a pinched side (the faces
-	## would not meet flush), a side under 3 m, a door, the lower walk's stubs or the upper parapet's corners in the way,
+	## the walk of u at level kl + 1, its top step against u's side. {} when it does not fit: a side whose faces
+	## would not meet flush, a side under 2.6 m, a door, the lower walk's stubs or the upper parapet's corners in the way,
 	## or less than 2.2 m of floor to run on.
 	var ku := kl + 1
 	var nbc: PackedInt32Array = grid.nbrs[c]
@@ -1105,7 +1525,7 @@ func _stair_fit(c: int, u: int, kl: int, low: Dictionary, up: Dictionary) -> Dic
 	var rgc: PackedInt32Array = grid.rings[c]
 	var raw0 := grid.centers[rgc[(ic + n - 1) % n]]
 	var raw1 := grid.centers[rgc[ic]]
-	var floor_ol := level_outline(c, kl) if kl >= 0 else outline(c, func(x: int) -> bool: return land.has(x))
+	var floor_ol := level_outline(c, kl) if kl >= 0 else outline(c)
 	if not convex(floor_ol) or floor_ol[(ic + n - 1) % n] != raw0 or floor_ol[ic] != raw1:
 		return {}
 	var m := (grid.nbrs[u] as PackedInt32Array).size()
@@ -1117,9 +1537,8 @@ func _stair_fit(c: int, u: int, kl: int, low: Dictionary, up: Dictionary) -> Dic
 	if kl < 0 and int(doors.get(u, -1)) == iu:
 		return {}                       # never in front of a door
 	var len := raw0.distance_to(raw1)
-	# hex cells have six shorter sides (~2.9 m) whose corners open at 120 deg: shorter sides and end margins do
-	var hexg := grid.fn == 3
-	if len < (2.6 if hexg else 3.0):
+	# a dodecagon's sides are 1.39 m with corners that open at 150 deg: a flight 1.0 m wide fits a side of 1.3 m
+	if len < MIN_SIDE:
 		return {}
 	var dir := (raw1 - raw0) / len
 	var nin := Vector2(-dir.y, dir.x)   # into c
@@ -1130,8 +1549,8 @@ func _stair_fit(c: int, u: int, kl: int, low: Dictionary, up: Dictionary) -> Dic
 		if el.is_empty() or bool((el.loop.opens as Array)[int(el.i)]):
 			return {}
 		var se := _stub_ext(el.loop, int(el.i))
-		lo = maxf(lo, se.x + 0.15)
-		hi = minf(hi, len - se.y - 0.15)
+		lo = maxf(lo, se.x + 0.05 * FS)
+		hi = minf(hi, len - se.y - 0.05 * FS)
 	# the upper parapet opens over the flight (plus a margin), well inside its inner line
 	var eu := _loop_edge(up, g0, u)
 	if eu.is_empty() or not bool((eu.loop.opens as Array)[int(eu.i)]):
@@ -1142,13 +1561,13 @@ func _stair_fit(c: int, u: int, kl: int, low: Dictionary, up: Dictionary) -> Dic
 	var nu := pu.size()
 	var si0 := (inu[j] - raw0).dot(dir)
 	var si1 := (inu[(j + 1) % nu] - raw0).dot(dir)
-	var span_lo := maxf(minf(si0, si1), 0.0) + 0.25 + GAP_MARGIN
-	var span_hi := minf(maxf(si0, si1), len) - 0.25 - GAP_MARGIN
-	var endm := 0.75 if hexg else 1.0
+	var span_lo := maxf(minf(si0, si1), 0.0) + 0.05 * FS + GAP_MARGIN
+	var span_hi := minf(maxf(si0, si1), len) - 0.05 * FS - GAP_MARGIN
+	var endm := 0.2 * FS
 	lo = maxf(lo, maxf(span_lo, endm + GAP_MARGIN))
 	hi = minf(hi, minf(span_hi, len - endm - GAP_MARGIN))
 	var hw := minf(STAIR_HW, (hi - lo) * 0.5)
-	if hw < 0.45:
+	if hw < 0.3 * FS:
 		return {}
 	var mid := (lo + hi) * 0.5
 	# how far it can run into c: inside the floor, clear of the parapets and walls round it, well clear of doors
@@ -1165,7 +1584,9 @@ func _stair_fit(c: int, u: int, kl: int, low: Dictionary, up: Dictionary) -> Dic
 		elif land.get(w, "") == "court":
 			lim[mm] = 0.1
 		elif int(doors.get(w, -1)) == grid.index_of(w, c):
-			lim[mm] = 1.5
+			# a door on one of the two sides next to the flight's: those lines start 0.7 m from its edge on a regular hex cell (the
+			# door itself is 1.6 m away), so they only have to be cleared by 0.7 m; any other door side by 1.5 m
+			lim[mm] = (0.35 if (mm == (ic + 1) % n or mm == (ic + n - 1) % n) else 0.9) * FS
 		else:
 			lim[mm] = 0.15
 	var b0 := raw0 + dir * (mid - hw)
@@ -1227,7 +1648,7 @@ func _openings() -> void:
 				if not rnd:
 					var ol := level_outline(v, k)
 					var f := PackedVector2Array([ol[(i + nb.size() - 1) % nb.size()], ol[i]])
-					if f[0].distance_to(f[1]) < 2.6:
+					if f[0].distance_to(f[1]) < MIN_SIDE:
 						continue           # too short a side for a door or a window
 					sp = (f[0] + f[1]) * 0.5
 					var along := (f[1] - f[0]).normalized()
@@ -1237,24 +1658,24 @@ func _openings() -> void:
 					# a house, tower or pagoda: its windows are painted (CSFacades, the wall shader); only the front door is cut
 					if k == 0 and int(doors.get(v, -1)) == i:
 						_door(v, sp, out, y, sty)
-						_note("door", v, k, i, sp, out, y, y + 2.3, 0.55, rnd, sty)
+						_note("door", v, k, i, sp, out, y, y + 2.3, DOOR_HW, rnd, sty)
 					continue
 				if k == 0:
 					if int(doors.get(v, -1)) == i:
 						_door(v, sp, out, y)
-						_note("door", v, k, i, sp, out, y, y + 2.3, 0.55, rnd)
+						_note("door", v, k, i, sp, out, y, y + 2.3, DOOR_HW, rnd)
 					elif not land.has(u) and roll < 0.3:
-						_recess(cs, sp, out, y + 1.4, 1.1, 0.08)
-						_note("slit", v, k, i, sp, out, y + 1.4, y + 2.5, 0.08, rnd)
+						_recess(cs, sp, out, y + 1.4, 1.1, SLIT_HW)
+						_note("slit", v, k, i, sp, out, y + 1.4, y + 2.5, SLIT_HW, rnd)
 				else:
 					if rnd and roll < 0.35:
 						continue
 					if roll < 0.45:
-						_recess(cs, sp, out, y + 1.3, 1.4, 0.08)        # an arrow slit
-						_note("slit", v, k, i, sp, out, y + 1.3, y + 2.7, 0.08, rnd)
+						_recess(cs, sp, out, y + 1.3, 1.4, SLIT_HW)        # an arrow slit
+						_note("slit", v, k, i, sp, out, y + 1.3, y + 2.7, SLIT_HW, rnd)
 					elif roll < 0.75:
-						_recess(cs, sp, out, y + 1.4, 1.25, 0.34)       # a window
-						_note("window", v, k, i, sp, out, y + 1.4, y + 2.65, 0.34, rnd)
+						_recess(cs, sp, out, y + 1.4, 1.25, WINDOW_HW)  # a window
+						_note("window", v, k, i, sp, out, y + 1.4, y + 2.65, WINDOW_HW, rnd)
 
 
 func _note(kind: String, v: int, k: int, i: int, sp: Vector2, out: Vector2, y0: float, y1: float, hw: float, rnd: bool, sty: int = 0) -> void:
@@ -1264,20 +1685,21 @@ func _note(kind: String, v: int, k: int, i: int, sp: Vector2, out: Vector2, y0: 
 
 
 func _recess(cut_stack: int, surface: Vector2, out: Vector2, y0: float, h: float, half_w: float, depth: float = 0.5) -> void:
+	depth *= FS                            # a recess is as deep as the wall is wide: on a small cell two neighbouring windows would cut into each other
 	var centre := surface - out * (depth * 0.5 - 0.15)
 	plan.add_layer(cut_stack, CFShapes.rect(centre, out, depth * 0.5 + 0.15, half_w), y0, y0 + h, CFMesh.Z_DARK)
 
 
 func _door(v: int, surface: Vector2, out: Vector2, y: float, sty: int = 0) -> void:
 	var cs := plan.new_stack(CFPlan.OP_CUT, 10000 + v, {"owner": v + 1, "label": "door", "zone": CSStyle.wall_zone(sty)})
-	var depth := 0.55
-	plan.add_layer(cs, CFShapes.rect(surface - out * (depth * 0.5 - 0.15), out, depth * 0.5 + 0.15, 0.55), y, y + 2.3)
+	var depth := 0.55 * FS
+	plan.add_layer(cs, CFShapes.rect(surface - out * (depth * 0.5 - 0.15), out, depth * 0.5 + 0.15, DOOR_HW), y, y + 2.3)
 	var lz := CFMesh.Z_DOOR if sty == CSStyle.CASTLE else CSStyle.trim_zone(sty)
 	var leaf := plan.new_stack(CFPlan.OP_ADD, 70000 + v, {"zone": lz, "top_zone": lz, "owner": v + 1, "prio": 12,
 		"flags": CFMesh.F_PLAIN, "label": "door leaf", "seed": colour_seed(town.colour(v, 0))})
 	# its back face is the recess's own back wall: a leaf reaching 2 cm behind it puts two corners exactly one weld distance apart (castle doors did,
 	# and on the hex grid's short sides that left a 2 cm sliver open)
-	plan.add_layer(leaf, CFShapes.rect(surface - out * (depth - 0.07), out, 0.07, 0.55), y, y + 2.2)
+	plan.add_layer(leaf, CFShapes.rect(surface - out * (depth - 0.07 * FS), out, 0.07 * FS, DOOR_HW), y, y + 2.2)
 
 
 func _hats() -> void:

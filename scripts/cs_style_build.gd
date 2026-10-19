@@ -28,6 +28,8 @@ class Ctx:
 	var n := 0
 	var poly := PackedVector2Array()       # the outline, rotated so that edge j (poly[j] -> poly[j + 1]) is side j (towards neighbour j)
 	var cls := PackedByteArray()
+	var room := PackedFloat32Array()        # per side: how deep the cell across it is (its inradius), what an eave there has room for
+	var room_min := INF                     # the least of those over the open sides
 	var no := 0
 	var np := 0
 	var nt := 0
@@ -152,6 +154,14 @@ static func _ctx(b: CSBuild, v: int, k: int) -> Ctx:
 	for j in n:
 		ctx.poly.append(ol[(j + n - 1) % n])
 		var u := nb[j]
+		var across: PackedVector2Array = b.grid.cells[u]
+		var cc: Vector2 = CSRoofs.centroid(across)
+		var room := INF
+		for jj in across.size():
+			room = minf(room, Geometry2D.get_closest_point_to_segment(cc, across[jj], across[(jj + 1) % across.size()]).distance_to(cc))
+		if not b.grid.buildable(u):
+			room = INF
+		ctx.room.append(room)
 		if b.filled(u, k + 1):
 			ctx.cls.append(TALL)
 			ctx.nt += 1
@@ -161,6 +171,7 @@ static func _ctx(b: CSBuild, v: int, k: int) -> Ctx:
 		else:
 			ctx.cls.append(OPEN)
 			ctx.no += 1
+			ctx.room_min = minf(ctx.room_min, room)
 	ctx.centre = CSRoofs.centroid(ctx.poly)
 	# the long axis: the principal axis of the corners, else the longest side
 	var sxx := 0.0
@@ -365,6 +376,30 @@ static func _shed_eave(x: Ctx) -> int:
 	return out
 
 
+static func _fit(x: Ctx, ovh: PackedFloat32Array) -> PackedFloat32Array:
+	## Eaves that keep the outline a proper polygon: a side with an overhang between sides without one is shortened by the mitres at its
+	## ends (a 150 degree corner pulls each end in by more than 1.7 times the overhang), and the outline folds over itself once that
+	## is more than the side is long. Overhangs are scaled down together until every side still runs the way it did.
+	var poly := CSRoofs.ccw(x.poly)
+	var n := poly.size()
+	for _t in 12:
+		var off := PackedFloat32Array()
+		for j in n:
+			off.append(ovh[j] if ovh[j] > 0.01 else -CSRoofs.INSET)
+		var outer := CSRoofs.offset_by_edges(poly, off)
+		var fine := true
+		for j in n:
+			var e := poly[(j + 1) % n] - poly[j]
+			var eo := outer[(j + 1) % n] - outer[j]
+			if eo.dot(e) < 0.35 * e.length_squared():
+				fine = false
+		if fine:
+			break
+		for j in n:
+			ovh[j] *= 0.75
+	return ovh
+
+
 static func _ridge(x: Ctx, parts: Array, mode: String, p: Dictionary) -> Dictionary:
 	var n := x.n
 	var gable := PackedByteArray()
@@ -386,7 +421,8 @@ static func _ridge(x: Ctx, parts: Array, mode: String, p: Dictionary) -> Diction
 	for j in n:
 		var is_eave := eaves.has(j)
 		gable[j] = 0 if is_eave else 1
-		ovh[j] = (float(p.eave) if is_eave else float(p.verge)) if x.cls[j] == OPEN else 0.0
+		ovh[j] = _cap(x, float(p.eave) if is_eave else float(p.verge)) if x.cls[j] == OPEN else 0.0
+	ovh = _fit(x, ovh)
 	var sh := CSRoofs.Shell.new()
 	var rec := CSRoofs.ridge(sh, x.poly, x.ys, {"slope": p.slope, "gable": gable, "ovh": ovh, "tf": p.tf, "zones": x.zones()})
 	if rec.is_empty():
@@ -402,7 +438,8 @@ static func _flat(x: Ctx, parts: Array, penthouse: bool) -> Dictionary:
 	ovh.resize(x.n)
 	var apartment := x.s == CSStyle.APARTMENT
 	for j in x.n:
-		ovh[j] = (x.rnd(10 + j, 0.0, 0.18) if apartment else x.rnd(10 + j, 0.1, 0.3)) if x.cls[j] == OPEN else 0.0
+		ovh[j] = _cap(x, x.rnd(10 + j, 0.0, 0.18) if apartment else x.rnd(10 + j, 0.1, 0.3)) if x.cls[j] == OPEN else 0.0
+	ovh = _fit(x, ovh)
 	var sh := CSRoofs.Shell.new()
 	var zr := x.zones(CSStyle.wall_zone(x.s))
 	zr["roof"] = CSStyle.pave_zone(x.s)
@@ -433,7 +470,8 @@ static func _mansard(x: Ctx, parts: Array) -> Dictionary:
 	var ovh := PackedFloat32Array()
 	ovh.resize(x.n)
 	for j in x.n:
-		ovh[j] = x.rnd(3, 0.15, 0.35) if x.cls[j] == OPEN else 0.0
+		ovh[j] = _cap(x, x.rnd(3, 0.15, 0.35)) if x.cls[j] == OPEN else 0.0
+	ovh = _fit(x, ovh)
 	var sh := CSRoofs.Shell.new()
 	var H := x.rnd(2, 1.5, 2.1)
 	var rec := CSRoofs.pyramid(sh, x.poly, x.ys, {"ovh": ovh, "H": H, "profile": PROF_STRAIGHT, "sub": 1, "tf": 0.16, "inner": inner, "zones": x.zones()})
@@ -450,12 +488,22 @@ const PROF_WITCH := [Vector2(0, 0), Vector2(0.08, 0.02), Vector2(0.22, 0.08), Ve
 const PROF_CHINESE := [Vector2(0, 0), Vector2(0.12, 0.03), Vector2(0.3, 0.13), Vector2(0.52, 0.36), Vector2(0.78, 0.72), Vector2(1, 1)]
 
 
+const EAVE_FRAC := 0.3
+
+
+static func _cap(x: Ctx, v: float) -> float:
+	## An eave is at most this fraction of the depth of the shallowest open cell round the roof, the same on every side (a mix of eaves and
+	## none on one roof breaks its corners): round a small triangular gap the eaves of the three roofs round it would otherwise run into
+	## each other and meet exactly in its middle.
+	return minf(v, EAVE_FRAC * x.room_min)
+
+
 static func _ovh_for(x: Ctx, v: float) -> PackedFloat32Array:
 	var ovh := PackedFloat32Array()
 	ovh.resize(x.n)
 	for j in x.n:
-		ovh[j] = v if x.cls[j] == OPEN else 0.0
-	return ovh
+		ovh[j] = _cap(x, v) if x.cls[j] == OPEN else 0.0
+	return _fit(x, ovh)
 
 
 static func _pyramid(x: Ctx, parts: Array, p: Dictionary) -> Dictionary:

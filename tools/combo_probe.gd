@@ -32,7 +32,7 @@ func _p2(p: Vector2) -> Array:
 
 func _context(b: CSBuild, v: int, k: int) -> String:
 	## What the rules can see of the blocks round (v, k): per side the neighbour's blocks one level down / level / up, and its own column's
-	## blocks below / above, up to turning and mirroring the cell. (Diagonal blocks, which only pinch a corner, are left out.)
+	## blocks below / above, up to turning and mirroring the cell. (Diagonal blocks are left out.)
 	var nb: PackedInt32Array = grid.nbrs[v]
 	var n := nb.size()
 	var sides: Array = []

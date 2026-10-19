@@ -1,18 +1,17 @@
 extends SceneTree
-## What the cells look like: how many sides, which way round, how long the sides are, how elongated (the building styles size roofs from this).
-## Run: Godot --headless --path . --script res://tools/grid_probe.gd
+## What the cells of the double hex grid look like: the 1141 building cells (regular dodecagons: 12 sides, 21.65 m2, side 1.39 m), which way round,
+## how long the sides are, how elongated, which directions the sides run in (6 orientations = 12 headings, multiples of 30 degrees), and how many
+## of each kind of cell the grid holds (the little triangles between the dodecagons are in the grid but not buildable). `--grid=hex` the plain
+## hexagon grid instead. Expected: 1141 cells of 12 sides, every side 1.391 m, corners 150 degrees, area 21.65 m2, no concave cell.
+## Run: Godot --headless --path . --script res://tools/grid_probe.gd [-- --svg=shots/hex_grid_plan.svg]   (--svg writes a plan of every cell)
 
 func _initialize() -> void:
-	# --grid=quad|hex, --flip=0.55, --pure, --circ=0.5, --seed=1
 	var opt := {}
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--"):
 			opt[a.substr(2).get_slice("=", 0)] = a.get_slice("=", 1) if "=" in a else "1"
 	var g := CSGrid.new()
-	g.flip_share = float(opt.get("flip", CSGrid.default_flip))
-	g.flip_pure = opt.has("pure") or CSGrid.default_pure
-	g.circ_blend = float(opt.get("circ", 0.0))
-	g.generate(int(opt.get("seed", 1)), 10, 10.0, str(opt.get("grid", "hex")))
+	g.generate(int(opt.get("seed", 1)), 0, str(opt.get("grid", "dodeca")), CSGrid.parse_div(str(opt.get("cell", "1"))))
 	var b := CSBuild.new()
 	b.grid = g
 	var by_n := {}
@@ -23,10 +22,12 @@ func _initialize() -> void:
 	var areas := []
 	var concave := 0
 	var worst := 0.0                     # the sharpest turn the wrong way (deg) over all cells
+	var dirs := {}                       # side direction (deg, mod 180) -> sides
+	var corners := {}                    # interior angle (deg) -> corners
 	for v in g.verts.size():
 		if not g.buildable(v):
 			continue
-		var ol := b.outline(v, func(_u: int) -> bool: return false)
+		var ol := b.outline(v)
 		var n := ol.size()
 		by_n[n] = int(by_n.get(n, 0)) + 1
 		var a2 := CSRoofs.area2(ol)
@@ -44,6 +45,11 @@ func _initialize() -> void:
 				worst = maxf(worst, rad_to_deg(absf(e0.angle_to(e1))))
 		for i in n:
 			lens.append(ol[i].distance_to(ol[(i + 1) % n]))
+			var dd := int(roundf(fposmod(rad_to_deg((ol[(i + 1) % n] - ol[i]).angle()), 180.0)))
+			dirs[dd % 180] = int(dirs.get(dd % 180, 0)) + 1
+			var turn := rad_to_deg((ol[(i + 1) % n] - ol[i]).angle_to(ol[(i + 2) % n] - ol[(i + 1) % n]))
+			var ia := int(roundf(180.0 - turn))
+			corners[ia] = int(corners.get(ia, 0)) + 1
 		# elongation by the principal axis of the corners
 		var c := CSRoofs.centroid(ol)
 		var sxx := 0.0
@@ -64,7 +70,42 @@ func _initialize() -> void:
 	elong.sort()
 	areas.sort()
 	print("%s cells %d  sides {%s}  ccw %d cw %d  concave %d  worst reflex %.1f deg" % [str(opt), ccw + cw, str(by_n), ccw, cw, concave, worst])
+	var dk := dirs.keys()
+	dk.sort()
+	print("%d line orientations (%d headings, every 30 deg): %s" % [dk.size(), dk.size() * 2, str(dk)])
+	print("corner angles (deg: count): %s   grid %s: %d building cells (the sea ring included), %d triangles in all" % [str(corners), CSGrid.id_of(g.kind), g.d_count, g.verts.size() - g.d_count])
 	print("side length min %.2f p10 %.2f median %.2f p90 %.2f max %.2f" % [lens[0], lens[lens.size() / 10], lens[lens.size() / 2], lens[lens.size() * 9 / 10], lens[lens.size() - 1]])
 	print("elongation min %.2f median %.2f p90 %.2f max %.2f" % [elong[0], elong[elong.size() / 2], elong[elong.size() * 9 / 10], elong[elong.size() - 1]])
 	print("area min %.1f median %.1f max %.1f" % [areas[0], areas[areas.size() / 2], areas[areas.size() - 1]])
+	if opt.has("svg"):
+		_write_svg(g, str(opt.svg))
 	quit(0)
+
+
+func _write_svg(g: CSGrid, path: String) -> void:
+	## A plan of the cells: dodecagons dark blue, triangles light blue, the sea ring grey; 6 px to the metre.
+	var sc := 6.0
+	var ext := 0.0
+	for v in g.verts.size():
+		ext = maxf(ext, g.verts[v].length())
+	ext += 8.0
+	var size := int(ext * 2.0 * sc)
+	var out := '<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d">\n<rect width="100%%" height="100%%" fill="#10202b"/>\n' % [size, size, size, size]
+	for v in g.verts.size():
+		var poly := g.dual(v)
+		if poly.size() < 3:
+			continue
+		var pts := []
+		for q in poly:
+			pts.append("%.1f,%.1f" % [(q.x + ext) * sc, (q.y + ext) * sc])
+		var fill := "#3a4a54"
+		if g.buildable(v):
+			fill = "#2c5b72"
+		elif not g.is_dodecagon(v):
+			fill = "#5aa0bb"                 # the triangles: part of the grid, not built on
+		out += '<polygon points="%s" fill="%s" stroke="#cfe6ef" stroke-width="1"/>\n' % [" ".join(pts), fill]
+	out += "</svg>\n"
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string(out)
+	f.close()
+	print("wrote ", path)

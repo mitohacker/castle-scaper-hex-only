@@ -17,8 +17,16 @@ var blocks := {}            # v * 64 + k -> style * 16 + colour index (the castl
 ## "t": tree levels 0..3, "d": 1 when a road runs through it}. A column of the landscape and a castle block never share a grid point,
 ## except that a courtyard (castle land with no block) can take land, trees and a road.
 var wild := {}
+## Straight walls: each is one continuous straight wall: {"x", "z": where its axis starts (m), "deg": the heading (degrees), "len": the axis's length (m),
+## "w": its thickness (m), "c": colour}. A wall is one rectangle (its axis in the middle, w wide), not a chain of cells: it cuts across the cells
+## it passes through. Walls that lie side by side are merged into one thicker wall (CSWalls). A wall from an older save is {"v": the cell it began on,
+## "deg", "len", "c"} until CSWalls.settle puts it on the grid it was made for.
+var walls: Array = []
 var grid_seed := 1
-var grid_radius := 10
+var grid_radius := CSGrid.RINGS
+var grid_kind := CSGrid.KIND_DODECA   # which cells the column numbers belong to (CSGrid.KIND_*)
+var wall_dirs := 12                   # the directions a straight wall may take: 12, 16 or 24 (CSGrid.DIR_COUNTS), a setting saved with the castle
+var grid_div := CSGrid.DEFAULT_DIV                     # ... at 1 / grid_div of the full cell area
 var name := "Untitled"
 
 
@@ -80,6 +88,27 @@ func columns() -> Array:
 func clear() -> void:
 	blocks.clear()
 	wild.clear()
+	walls.clear()
+
+
+func wall_add(x: float, z: float, deg: float, length: float, width: float, c: int) -> bool:
+	## A straight wall from the point (x, z) along heading deg; false for a wall too short to stand or one that is there already.
+	deg = fposmod(deg, 360.0)
+	if length < 1.0:
+		return false
+	for w: Dictionary in walls:
+		if w.has("x") and absf(float(w.x) - x) < 0.01 and absf(float(w.z) - z) < 0.01 and absf(float(w.deg) - deg) < 0.01 and absf(float(w.len) - length) < 0.01 \
+				and absf(float(w.w) - width) < 0.01:
+			return false
+	walls.append({"x": x, "z": z, "deg": deg, "len": length, "w": width, "c": clampi(c, 0, COLOURS - 1)})
+	return true
+
+
+func wall_remove(i: int) -> bool:
+	if i < 0 or i >= walls.size():
+		return false
+	walls.remove_at(i)
+	return true
 
 
 func size() -> int:
@@ -193,19 +222,39 @@ func to_dict() -> Dictionary:
 	for v: int in wild_columns():
 		var r: Dictionary = wild[v]
 		wl.append([v, int(r.get("l", 0)), str(r.get("h", "")), int(r.get("t", 0)), int(r.get("d", 0))])
-	return {"name": name, "grid_seed": grid_seed, "grid_radius": grid_radius, "blocks": list, "wild": wl}
+	var wa := []
+	for w: Dictionary in walls:
+		if w.has("v"):
+			wa.append([int(w.v), float(w.deg), float(w.len), int(w.c)])           # not put on its grid yet
+		else:
+			wa.append([snappedf(float(w.x), 0.0001), snappedf(float(w.z), 0.0001), snappedf(float(w.deg), 0.0001), snappedf(float(w.len), 0.0001), snappedf(float(w.w), 0.0001), int(w.c)])
+	return {"name": name, "grid": CSGrid.id_of(grid_kind, grid_div), "grid_seed": grid_seed, "grid_radius": grid_radius, "blocks": list, "wild": wl, "walls": wa, "wall_dirs": wall_dirs}
 
 
 func from_dict(d: Dictionary) -> void:
 	blocks.clear()
 	name = str(d.get("name", "Untitled"))
 	grid_seed = int(d.get("grid_seed", 1))
-	grid_radius = int(d.get("grid_radius", 10))
+	grid_radius = int(d.get("grid_radius", CSGrid.RINGS))
 	wild.clear()
+	walls.clear()
+	var k := CSGrid.kind_of(str(d.get("grid", "")))
+	if k == "":
+		# a town saved on another grid: its column numbers mean other cells here, so it opens as an empty sea
+		grid_radius = CSGrid.RINGS
+		return
+	grid_kind = k
+	grid_div = CSGrid.div_of(str(d.get("grid", "")))
+	wall_dirs = int(d.get("wall_dirs", 12)) if int(d.get("wall_dirs", 12)) in CSGrid.DIR_COUNTS else 12
 	for b in d.get("blocks", []):
 		blocks[int(b[0]) * 64 + int(b[1])] = int(b[2])
 	for w in d.get("wild", []):
 		wild[int(w[0])] = {"l": int(w[1]), "h": str(w[2]), "t": int(w[3]), "d": int(w[4])}
+	for w in d.get("walls", []):
+		if (w as Array).size() >= 6:
+			walls.append({"x": float(w[0]), "z": float(w[1]), "deg": float(w[2]), "len": float(w[3]), "w": float(w[4]), "c": int(w[5])})
+		else:
+			walls.append({"v": int(w[0]), "deg": float(w[1]), "len": float(w[2]), "c": int(w[3])})
 
 
 func duplicate_town() -> CSTown:

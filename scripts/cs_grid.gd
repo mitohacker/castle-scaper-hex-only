@@ -1,50 +1,59 @@
 class_name CSGrid
 extends RefCounted
-## Castle Scaper Hex: two grids. "hex" (the default here) is an ORGANIC HEX GRID: a triangle lattice cut to a hexagon
-## (half the quad grid's step, so cells keep about the same area), random edge flips that leave every inner point with
-## 5, 6 or 7 neighbours, then every triangle pulled towards the best-fitting equilateral triangle round its own centre
-## (the same summed-pull relaxation as Townscaper's squares). The dual cells are then mostly hexagons, with pentagons and
-## heptagons where a flip landed, warped by the relaxation. Every cell corner is shared by exactly three cells, all
-## neighbours of each other, so two blocks never touch at only a corner (nothing to pinch). "quad" is Townscaper's grid:
-## Townscaper's grid on a hexagonal map (read from Townscaper's own GridGenerator with REA + Ghidra, see
-## C:\Dev\Prototypes\townscaper-re\notes\grid.md): a triangle lattice cut to a hexagon, random neighbouring
-## triangles merged into quads, every face subdivided once (a quad into 4, a triangle into 3 quads; vertices keyed by
-## integers, never merged by distance), then every quad pulled towards the best-fitting square round its own centre,
-## the pulls summed per vertex and applied x0.4, 255 times. Vertices where 3, 5 or 6 quads meet give the hand-laid look.
+## Castle Scaper Hex: the DOUBLE HEX GRID, "12 sides". A building cell is a regular DODECAGON: 12 sides instead of a hexagon's 6, at the SAME SIZE as
+## the regular hexagon it replaces (21.65 m2, 5.2 m across the flats, side 1.39 m). The cells are the truncated hexagonal tiling (3.12.12):
+## dodecagons sit on a triangular lattice and touch their six lattice neighbours along a whole shared side; the gap between every three of
+## them is an equilateral triangle of the same side (0.84 m2), which is too small to build on: it is kept in the grid (so every corner is still
+## shared by exactly three cells) but is not buildable, a little pit between the blocks. Two hexagon grids, one turned 30 degrees, draw
+## lines in 12 directions; the dodecagons' sides run along all of them (every direction a multiple of 30 degrees).
 ##
-## A block stands on a grid VERTEX (Townscaper's voxels live on corners) and fills that vertex's dual cell: the
-## edge midpoints and quad centres round it. The map's border vertices are pinned and cannot be built on.
+## A block stands on a grid POINT and fills that point's cell. The points are the dodecagons' centres (12 neighbours: 6 dodecagons and 6
+## triangles, alternating) and the triangles' centres (3 neighbours: the dodecagons round it). The faces of the point graph are the
+## triangles (D, D', T), one per cell corner, and `centers[q]` is that corner's real position, not the face's centroid. Every corner is shared
+## by exactly three cells that are all neighbours of each other, so two blocks never touch at only a corner. The outermost ring of dodecagons
+## is sea (not buildable); a hexagon-shaped island stands inside it (19 rings round the middle one: the same 1141 cells as the hexagon grid).
+##
+## (History: a random-flip hex grid, an organic jittered one, a regular hexagon grid, a dodecagon grid twice the size. The seed is kept for
+## saved towns and does nothing.)
 
-const RELAX_STEPS := 255
-const PULL := 0.4
-const HEX_PULL := 0.8               # hex: the averaged pull per step
-const FLIP_TRIES := 0.2             # hex: share of the inner edges tried for a flip (42 % of cells stay hexagons, 29 % pentagons, 29 % heptagons)
+const SIDE := 1.3905934          # the side of every cell (m): the dodecagon has the area of the regular hexagon of side 5 / sqrt(3) (21.65 m2)
+const TURN := 3.7320508075688772     # 2 + sqrt(3): the distance between two dodecagon centres in sides
+const D_SPACING := SIDE * TURN       # 5.19 m
+const RINGS := 20                    # dodecagon rings round the middle one: 1261 dodecagons, the outer ring is the sea (1141 buildable)
+const GRID_ID := "dodeca-2"          # saved towns say which grid their column numbers belong to (this one: dodecagons of 21.65 m2)
+const KIND_DODECA := "dodeca"        # dodecagons (and unbuildable triangles between them)
+const KIND_HEX := "hex"              # the plain regular hexagon grid: 1141 hexagons of 2.887 m side, 21.65 m2 at the full size
+const HEX_ID := "hex-2"
+const KIND_LAYER := "layer"          # two hexagon lattices layered, one turned 30 degrees: a cell round every point of both (their Voronoi cells)
+const LAYER2_ID := "layer-2"
+const KIND_LAYER3 := "layer3"        # three lattices layered, turned 0, 20 and 40 degrees
+const LAYER3_ID := "layer3-2"
+const BASE_AREA := 12.5 * 1.7320508075688772   # 21.65 m2: the area of a cell at div 1 (the hexagon of side 5 / sqrt 3, the dodecagon of side SIDE)
+const DEFAULT_DIV := 4               # the cell size a new town starts with: a quarter of the area of the first version's cells (5.4 m2, side 0.70 m)
+const DIVS := [1, 2, 4, 6, 8]        # the cell sizes the game offers: 1 / div of the area (div 1: 21.65 m2, 2: 10.8, 4: 5.4, 6: 3.6, 8: 2.7 m2)
+const MAX_DIV := 8                   # (the largest a save or --cs-cell may name; 1/6 and 1/8 are the experimental steps: see SPEC 0b)
 
-static var default_kind := "hex"    # --cs-grid=quad|hex
-static var default_flip := FLIP_TRIES # --cs-flip=0.05 (68 % hexagons) .. 0.6 (30 %)
-static var default_pure := true      # --cs-flip-pure=0 lets defects cluster (stretched cells; broke some corbels)
-var kind := "hex"
-var fn := 4                         # corners per face: 4 (quad grid) or 3 (hex grid: triangles, dual cells hexagons)
-var flip_share := default_flip       # hex knobs (tools/grid_probe.gd sweeps them)
-var flip_pure := default_pure             # hex: flip only where all four points still have six neighbours
-var circ_blend := 0.0               # hex: a cell corner from the triangle's centroid (0) towards its circumcentre (1)
-
-var step := 10.0                    # triangle side (m); one subdivision makes quads of about half that
-var radius := 10                    # hexagon radius in triangles
+var kind := KIND_DODECA             # which cells: KIND_DODECA or KIND_HEX
+var div := 1                        # the cell size: 1 / div of the area of the full-size cell (the island stays as big, it has more cells)
+var cell := 1.0                     # ... as a length: 1 / sqrt(div)
+var side := SIDE                    # the side of every cell (m)
+var spacing := D_SPACING            # the distance between the middles of two neighbouring building cells (m)
+var step := D_SPACING               # (the size of the hash cells of the lookup)
+var radius := RINGS                 # rings of cells round the middle one
 var seed := 1
-var verts := PackedVector2Array()   # relaxed positions (m, x / z)
-var rest := PackedVector2Array()    # before relaxation
-var border := PackedByteArray()     # 1 on the map's edge (pinned, not buildable)
-var quads := PackedInt32Array()     # fn per face (quad or triangle), counter-clockwise in (x, z)
-var centers := PackedVector2Array() # per quad
-var nbrs: Array = []                # per vertex: PackedInt32Array of neighbours, counter-clockwise
-var rings: Array = []               # per vertex: PackedInt32Array, quad i lies between nbrs[i] and nbrs[i+1] (-1: outside)
+var verts := PackedVector2Array()   # the points: dodecagon centres first (d_count), then triangle centres (m)
+var d_count := 0                    # how many of the points are dodecagon centres
+var border := PackedByteArray()     # 1 on the sea ring (not buildable)
+var tris := PackedInt32Array()      # 3 point ids per face, counter-clockwise in (x, z): dodecagon, dodecagon, triangle
+var centers := PackedVector2Array() # per face: the cell corner it stands for (shared by the three cells round it)
+var nbrs: Array = []                # per point: PackedInt32Array of neighbours, counter-clockwise
+var rings: Array = []               # per point: PackedInt32Array, face i lies between nbrs[i] and nbrs[i+1] (-1: outside)
+var cells: Array = []               # per point: its cell polygon (the corners of its faces, counter-clockwise)
 var _mid := {}                      # edge key -> midpoint
-var _hash := {}                     # Vector2i (cells of `step`) -> [vertex ids]
+var _hash := {}                     # Vector2i (cells of _hs metres) -> [point ids]
+var _hs := HASH                     # the size of a hash cell: 1.16 cell spacings (so a lookup tests as many points at 1/8 cells as at the full size)
 
-
-static func _key(k: Vector2i) -> int:
-	return (k.x + 4096) * 16384 + (k.y + 4096)
+const HASH := 6.0                    # (the hash cell of the full-size grid and of the layered ones)
 
 
 func edge_key(a: int, b: int) -> int:
@@ -55,357 +64,296 @@ func mid(a: int, b: int) -> Vector2:
 	return _mid.get(edge_key(a, b), (verts[a] + verts[b]) * 0.5)
 
 
-func generate(p_seed: int = 1, p_radius: int = 10, p_step: float = 10.0, p_kind: String = "") -> void:
-	kind = p_kind if p_kind != "" else default_kind
-	if kind == "hex":
-		_generate_hex(p_seed, p_radius, p_step)
+static func id_of(k: String, d: int = 1) -> String:
+	## The tag a saved town carries for cells of kind k at 1 / d of the full area: "dodeca-2", "hex-2" (d = 1, the tags of the first versions), then
+	## "dodeca-2/2", "dodeca-2/3", "hex-2/2" ...
+	var base := GRID_ID
+	match k:
+		KIND_HEX:
+			base = HEX_ID
+		KIND_LAYER:
+			base = LAYER2_ID
+		KIND_LAYER3:
+			base = LAYER3_ID
+	return base if d <= 1 else "%s/%d" % [base, d]
+
+
+static func kind_of(id: String) -> String:
+	## The kind of cells a tag names, or "" for a tag of another grid.
+	match id.get_slice("/", 0):
+		HEX_ID:
+			return KIND_HEX
+		GRID_ID:
+			return KIND_DODECA
+		LAYER2_ID:
+			return KIND_LAYER
+		LAYER3_ID:
+			return KIND_LAYER3
+	return ""
+
+
+static func div_of(id: String) -> int:
+	## The cell size a tag names (1 for the tags without one).
+	if "/" in id:
+		return clampi(int(id.get_slice("/", 1)), 1, MAX_DIV)
+	return 1
+
+
+static func parse_div(text: String) -> int:
+	## "2" or "1/2": the cell size as 1 / div of the area.
+	var parts := text.split("/")
+	return clampi(int(parts[parts.size() - 1]), 1, MAX_DIV)
+
+
+static func variants() -> Array:
+	## The grids the game offers, in the order the Cells button goes through them: [kind, div]. The first is the default (12-sided cells at a quarter of the
+	## area), then the two smaller steps (1/6 and 1/8: they build, with a few defects on the stress towns), then the larger ones; the layered lattices
+	## (KIND_LAYER, KIND_LAYER3) are experiments, reachable with --cs-grid=layer only: their cells are irregular.
+	return [[KIND_DODECA, DEFAULT_DIV], [KIND_DODECA, 6], [KIND_DODECA, 8], [KIND_DODECA, 2], [KIND_DODECA, 1], [KIND_HEX, 4], [KIND_HEX, 2], [KIND_HEX, 1]]
+
+
+static func variant_name(k: String, d: int) -> String:
+	var shape := "12 sides"
+	match k:
+		KIND_HEX:
+			shape = "6 sides"
+		KIND_LAYER:
+			shape = "2 layers"
+		KIND_LAYER3:
+			shape = "3 layers"
+	return shape if d <= 1 else "%s, 1/%d area" % [shape, d]
+
+
+func is_dodecagon(v: int) -> bool:
+	## A building cell (a dodecagon, or any cell of the plain hexagon grid), not one of the little triangles.
+	return v < d_count
+
+
+func generate(p_seed: int = 1, p_radius: int = 0, p_kind: String = KIND_DODECA, p_div: int = 1) -> void:
+	## p_radius 0: as many rings as keep the island as big as the full-size one (RINGS rings of full-size cells).
+	seed = p_seed
+	kind = p_kind
+	div = maxi(p_div, 1)
+	cell = 1.0 / sqrt(float(div))
+	radius = clampi(p_radius if p_radius > 0 else roundi(float(RINGS) / cell), 2, 60)
+	var n := radius
+	if kind == KIND_HEX:
+		_generate_hex(n)
 		return
-	fn = 4
-	seed = p_seed
-	radius = p_radius
-	step = p_step
-	var rng := RandomNumberGenerator.new()
-	rng.seed = seed
-	var r := radius
+	if kind == KIND_LAYER or kind == KIND_LAYER3:
+		_generate_layered([0.0, 30.0] if kind == KIND_LAYER else [0.0, 20.0, 40.0], BASE_AREA / float(div))
+		return
+	side = SIDE * cell
+	spacing = D_SPACING * cell
+	step = spacing
 	var e1 := Vector2(1.0, 0.0)
 	var e2 := Vector2(0.5, sqrt(3.0) * 0.5)
 	var inside := func(a: int, b: int) -> bool:
-		return absi(a) <= r and absi(b) <= r and absi(a + b) <= r
-	# 1. the triangle lattice in twelfths of a lattice step (midpoints and centres stay integers)
-	var tris: Array = []
-	for a in range(-r, r + 1):
-		for b in range(-r, r + 1):
-			if inside.call(a, b) and inside.call(a + 1, b) and inside.call(a, b + 1):
-				tris.append([Vector2i(a, b) * 12, Vector2i(a + 1, b) * 12, Vector2i(a, b + 1) * 12])
-			if inside.call(a + 1, b) and inside.call(a + 1, b + 1) and inside.call(a, b + 1):
-				tris.append([Vector2i(a + 1, b) * 12, Vector2i(a + 1, b + 1) * 12, Vector2i(a, b + 1) * 12])
-	var edges := {}
-	for t in tris.size():
-		for k in 3:
-			var ka := _key(tris[t][k])
-			var kb := _key(tris[t][(k + 1) % 3])
-			var ek: int = mini(ka, kb) * 268435456 + maxi(ka, kb)
-			if not edges.has(ek):
-				edges[ek] = []
-			(edges[ek] as Array).append(t)
-	# 2. random pairwise merges (Townscaper: until no neighbouring pair is left)
-	var order: Array = range(tris.size())
-	for i in range(order.size() - 1, 0, -1):
-		var j := rng.randi_range(0, i)
-		var tmp: int = order[i]
-		order[i] = order[j]
-		order[j] = tmp
-	var merged := PackedByteArray()
-	merged.resize(tris.size())
-	var polys: Array = []
-	for t: int in order:
-		if merged[t]:
-			continue
-		var tr: Array = tris[t]
-		var cands: Array = []
-		for k in 3:
-			var ka := _key(tr[k])
-			var kb := _key(tr[(k + 1) % 3])
-			for u: int in edges[mini(ka, kb) * 268435456 + maxi(ka, kb)]:
-				if u != t and not merged[u]:
-					cands.append([u, k])
-		if cands.is_empty():
-			continue
-		var pick: Array = cands[rng.randi_range(0, cands.size() - 1)]
-		var ub: Array = tris[pick[0]]
-		var k0: int = pick[1]
-		var a0: Vector2i = tr[k0]
-		var b0: Vector2i = tr[(k0 + 1) % 3]
-		var c0: Vector2i = tr[(k0 + 2) % 3]
-		var d0: Vector2i = ub[0]
-		for q: Vector2i in ub:
-			if q != a0 and q != b0:
-				d0 = q
-		polys.append([a0, d0, b0, c0])         # (a, b, c) + (b, a, d) -> (a, d, b, c), counter-clockwise
-		merged[t] = 1
-		merged[pick[0]] = 1
-	for t in tris.size():
-		if not merged[t]:
-			polys.append(tris[t])
-	# 3. one subdivision
-	var vid := {}
-	var keys: Array[Vector2i] = []
-	var get_v := func(k: Vector2i) -> int:
-		var kk := _key(k)
-		if vid.has(kk):
-			return vid[kk]
-		vid[kk] = keys.size()
-		keys.append(k)
-		return keys.size() - 1
-	var qs := PackedInt32Array()
-	for poly: Array in polys:
-		var n := poly.size()
-		var sum := Vector2i.ZERO
-		for q: Vector2i in poly:
-			sum += q
-		var e: int = get_v.call(sum / n)
-		for k in n:
-			var a: Vector2i = poly[k]
-			var nx: Vector2i = poly[(k + 1) % n]
-			var pv: Vector2i = poly[(k + n - 1) % n]
-			qs.append(get_v.call(a))
-			qs.append(get_v.call((a + nx) / 2))
-			qs.append(e)
-			qs.append(get_v.call((a + pv) / 2))
-	quads = qs
-	var nv := keys.size()
-	rest.resize(nv)
-	border.resize(nv)
-	border.fill(0)
-	for i in nv:
-		var k := keys[i]
-		rest[i] = (e1 * float(k.x) + e2 * float(k.y)) * step / 12.0
-		# on the hexagon's edge: one of the three axial coordinates at +-r (in twelfths)
-		var kz := -k.x - k.y
-		if absi(k.x) == 12 * r or absi(k.y) == 12 * r or absi(kz) == 12 * r:
-			border[i] = 1
-	# 4. relaxation: squares of the mean quad area, border pinned
-	var area := 0.0
-	var nq := quads.size() / 4
-	for q in nq:
-		var a := rest[quads[q * 4]]
-		var b := rest[quads[q * 4 + 1]]
-		var c := rest[quads[q * 4 + 2]]
-		var d := rest[quads[q * 4 + 3]]
-		area += absf((c - a).cross(d - b)) * 0.5
-	var side := sqrt(area / float(nq))
-	var diag := side * sqrt(2.0) * 0.5
-	var p := rest.duplicate()
-	var dsum := PackedVector2Array()
-	dsum.resize(nv)
-	for _s in RELAX_STEPS:
-		dsum.fill(Vector2.ZERO)
-		for q in nq:
-			var i0 := quads[q * 4]
-			var i1 := quads[q * 4 + 1]
-			var i2 := quads[q * 4 + 2]
-			var i3 := quads[q * 4 + 3]
-			var a := p[i0]
-			var b := p[i1]
-			var c := p[i2]
-			var d := p[i3]
-			var m := (a + b + c + d) * 0.25
-			var d1 := b - m
-			var d3 := d - m
-			var v := (a - m) + Vector2(d1.y, -d1.x) - (c - m) + Vector2(-d3.y, d3.x)
-			if v.length_squared() < 1e-12:
-				continue
-			var rr := v.normalized() * diag
-			dsum[i0] += m + rr - a
-			dsum[i1] += m + Vector2(-rr.y, rr.x) - b
-			dsum[i2] += m - rr - c
-			dsum[i3] += m + Vector2(rr.y, -rr.x) - d
-		for i in nv:
-			if not border[i]:
-				p[i] += dsum[i] * PULL
-	verts = p
-	_build_topology()
-
-
-func _generate_hex(p_seed: int, p_radius: int, p_step: float) -> void:
-	fn = 3
-	seed = p_seed
-	radius = p_radius
-	step = p_step
-	var rng := RandomNumberGenerator.new()
-	rng.seed = seed
-	var r := radius * 2                       # lattice step = step / 2: cells ~22 m2, the map as wide as the quad grid
-	var s := step * 0.5
-	var e1 := Vector2(1.0, 0.0)
-	var e2 := Vector2(0.5, sqrt(3.0) * 0.5)
-	var inside := func(a: int, b: int) -> bool:
-		return absi(a) <= r and absi(b) <= r and absi(a + b) <= r
-	# 1. the triangle lattice cut to a hexagon
-	var vid := {}
-	var nv := 0
-	rest.resize(0)
+		return absi(a) <= n and absi(b) <= n and absi(a + b) <= n
+	# the dodecagons: a triangular lattice cut to a hexagon
+	var did := {}
+	verts.resize(0)
 	border.resize(0)
-	for a in range(-r, r + 1):
-		for b in range(-r, r + 1):
+	for a in range(-n, n + 1):
+		for b in range(-n, n + 1):
 			if inside.call(a, b):
-				vid[Vector2i(a, b)] = nv
-				nv += 1
-				rest.append((e1 * float(a) + e2 * float(b)) * s)
-				border.append(1 if (absi(a) == r or absi(b) == r or absi(a + b) == r) else 0)
-	var tri: Array = []                       # [a, b, c] counter-clockwise
-	for a in range(-r, r + 1):
-		for b in range(-r, r + 1):
-			if inside.call(a, b) and inside.call(a + 1, b) and inside.call(a, b + 1):
-				tri.append([vid[Vector2i(a, b)], vid[Vector2i(a + 1, b)], vid[Vector2i(a, b + 1)]])
-			if inside.call(a + 1, b) and inside.call(a + 1, b + 1) and inside.call(a, b + 1):
-				tri.append([vid[Vector2i(a + 1, b)], vid[Vector2i(a + 1, b + 1)], vid[Vector2i(a, b + 1)]])
-	# 2. random edge flips: (a, b, c) + (b, a, d) -> (c, a, d) + (d, b, c); a and b lose a neighbour, c and d gain one
-	var deg := PackedInt32Array()
-	deg.resize(nv)
-	var edges := {}                           # edge key -> [triangle, triangle]
-	var ekey := func(a: int, b: int) -> int:
-		return mini(a, b) * 1048576 + maxi(a, b)
-	for t in tri.size():
-		for k in 3:
-			var a: int = tri[t][k]
-			var b: int = tri[t][(k + 1) % 3]
-			var ek: int = ekey.call(a, b)
-			if not edges.has(ek):
-				edges[ek] = []
-				deg[a] += 1
-				deg[b] += 1
-			(edges[ek] as Array).append(t)
-	var order: Array = edges.keys()
-	for i in range(order.size() - 1, 0, -1):
-		var j := rng.randi_range(0, i)
-		var tmp = order[i]
-		order[i] = order[j]
-		order[j] = tmp
-	var tries := int(float(order.size()) * flip_share)
-	var flipped := {}                         # triangles already touched by a flip stay as they are (keeps defects apart)
-	for ii in tries:
-		var ek: int = order[ii]
-		if not edges.has(ek):
-			continue
-		var ts: Array = edges[ek]
-		if ts.size() != 2 or flipped.has(ts[0]) or flipped.has(ts[1]):
-			continue
-		var a: int = ek / 1048576
-		var b: int = ek % 1048576
-		var t0: int = ts[0]
-		var t1: int = ts[1]
-		# t0 must run a -> b; find c (t0's third) and d (t1's third)
-		var tr0: Array = tri[t0]
-		var k0 := tr0.find(a)
-		if tr0[(k0 + 1) % 3] != b:
-			var sw := a
-			a = b
-			b = sw
-			k0 = tr0.find(a)
-		var c: int = tr0[(k0 + 2) % 3]
-		var d := -1
-		for q: int in tri[t1]:
-			if q != a and q != b:
-				d = q
-		if border[a] or border[b] or border[c] or border[d]:
-			continue
-		if deg[a] <= 5 or deg[b] <= 5 or deg[c] >= 7 or deg[d] >= 7:
-			continue
-		if flip_pure and (deg[a] != 6 or deg[b] != 6 or deg[c] != 6 or deg[d] != 6):
-			continue
-		# the new diagonal must lie inside the quad (a, d, b, c) at rest
-		var pa := rest[a]
-		var pb := rest[b]
-		var pc := rest[c]
-		var pd := rest[d]
-		if (pa - pc).cross(pd - pc) <= 1e-6 or (pb - pd).cross(pc - pd) <= 1e-6:
-			continue
-		var ekcd: int = ekey.call(c, d)
-		if edges.has(ekcd):
-			continue
-		tri[t0] = [c, a, d]
-		tri[t1] = [d, b, c]
-		edges.erase(ek)
-		edges[ekcd] = [t0, t1]
-		for pair: Array in [[a, d, t1, t0], [b, c, t0, t1]]:
-			var e2k: int = ekey.call(pair[0], pair[1])
-			var lst: Array = edges[e2k]
-			var at := lst.find(pair[2])
-			if at >= 0:
-				lst[at] = pair[3]
-		deg[a] -= 1
-		deg[b] -= 1
-		deg[c] += 1
-		deg[d] += 1
-		flipped[t0] = true
-		flipped[t1] = true
+				did[Vector2i(a, b)] = verts.size()
+				verts.append((e1 * float(a) + e2 * float(b)) * spacing)
+				border.append(1 if (absi(a) == n or absi(b) == n or absi(a + b) == n) else 0)
+	d_count = verts.size()
+	# a triangle in every gap between three dodecagons (the lattice triangles pointing up and down), and three faces round it
 	var qs := PackedInt32Array()
-	for tr: Array in tri:
-		qs.append(tr[0])
-		qs.append(tr[1])
-		qs.append(tr[2])
-	quads = qs
-	# 3. relaxation: equilateral triangles of the mean area, fitted round each triangle's centre, border pinned
-	var nt := tri.size()
-	var area := 0.0
-	for q in nt:
-		area += absf((rest[quads[q * 3 + 1]] - rest[quads[q * 3]]).cross(rest[quads[q * 3 + 2]] - rest[quads[q * 3]])) * 0.5
-	var side := sqrt(area / float(nt) * 4.0 / sqrt(3.0))
-	var circ := side / sqrt(3.0)
-	var c120 := cos(TAU / 3.0)
-	var s120 := sin(TAU / 3.0)
-	var p := rest.duplicate()
-	var dsum := PackedVector2Array()
-	dsum.resize(nv)
-	# six to seven triangles pull each point: Townscaper's summed x0.4 would be a gain of 2.4 and oscillate, so the
-	# pulls are averaged per point instead (gain HEX_PULL)
-	var inv := PackedFloat32Array()
-	inv.resize(nv)
-	for q in nt:
+	var lattice_tris: Array = []
+	for a in range(-n, n + 1):
+		for b in range(-n, n + 1):
+			if inside.call(a, b) and inside.call(a + 1, b) and inside.call(a, b + 1):
+				lattice_tris.append([did[Vector2i(a, b)], did[Vector2i(a + 1, b)], did[Vector2i(a, b + 1)]])
+			if inside.call(a + 1, b) and inside.call(a + 1, b + 1) and inside.call(a, b + 1):
+				lattice_tris.append([did[Vector2i(a + 1, b)], did[Vector2i(a + 1, b + 1)], did[Vector2i(a, b + 1)]])
+	for lt: Array in lattice_tris:
+		var t := verts.size()
+		verts.append((verts[lt[0]] + verts[lt[1]] + verts[lt[2]]) / 3.0)
+		border.append(0)
 		for k in 3:
-			inv[quads[q * 3 + k]] += 1.0
-	for i in nv:
-		inv[i] = HEX_PULL / maxf(inv[i], 1.0)
-	for _s in RELAX_STEPS:
-		dsum.fill(Vector2.ZERO)
-		for q in nt:
-			var i0 := quads[q * 3]
-			var i1 := quads[q * 3 + 1]
-			var i2 := quads[q * 3 + 2]
-			var a := p[i0]
-			var b := p[i1]
-			var c := p[i2]
-			var m := (a + b + c) / 3.0
-			var d1 := b - m
-			var d2 := c - m
-			# rotate b's offset back by 120 deg and c's by 240 deg into a's frame and sum
-			var v := (a - m) + Vector2(d1.x * c120 + d1.y * s120, -d1.x * s120 + d1.y * c120) \
-				+ Vector2(d2.x * c120 - d2.y * s120, d2.x * s120 + d2.y * c120)
-			if v.length_squared() < 1e-12:
-				continue
-			var rr := v.normalized() * circ
-			var rb := Vector2(rr.x * c120 - rr.y * s120, rr.x * s120 + rr.y * c120)
-			var rc := Vector2(rb.x * c120 - rb.y * s120, rb.x * s120 + rb.y * c120)
-			dsum[i0] += m + rr - a
-			dsum[i1] += m + rb - b
-			dsum[i2] += m + rc - c
-		for i in nv:
-			if not border[i]:
-				p[i] += dsum[i] * inv[i]
-	verts = p
+			qs.append_array([lt[k], lt[(k + 1) % 3], t])
+	tris = qs
 	_build_topology()
+
+
+func _generate_hex(n: int) -> void:
+	## The regular hexagon grid: a triangle lattice of 5 m cut to a hexagon of n rings, a cell round every point (the centroids of the six
+	## triangles round it): regular hexagons of 2.887 m side, pointy-top.
+	side = 5.0 / sqrt(3.0) * cell
+	spacing = 5.0 * cell
+	step = spacing
+	var e1 := Vector2(1.0, 0.0)
+	var e2 := Vector2(0.5, sqrt(3.0) * 0.5)
+	var inside := func(a: int, b: int) -> bool:
+		return absi(a) <= n and absi(b) <= n and absi(a + b) <= n
+	var vid := {}
+	verts.resize(0)
+	border.resize(0)
+	for a in range(-n, n + 1):
+		for b in range(-n, n + 1):
+			if inside.call(a, b):
+				vid[Vector2i(a, b)] = verts.size()
+				verts.append((e1 * float(a) + e2 * float(b)) * spacing)
+				border.append(1 if (absi(a) == n or absi(b) == n or absi(a + b) == n) else 0)
+	d_count = verts.size()
+	var qs := PackedInt32Array()
+	for a in range(-n, n + 1):
+		for b in range(-n, n + 1):
+			if inside.call(a, b) and inside.call(a + 1, b) and inside.call(a, b + 1):
+				qs.append_array([vid[Vector2i(a, b)], vid[Vector2i(a + 1, b)], vid[Vector2i(a, b + 1)]])
+			if inside.call(a + 1, b) and inside.call(a + 1, b + 1) and inside.call(a, b + 1):
+				qs.append_array([vid[Vector2i(a + 1, b)], vid[Vector2i(a + 1, b + 1)], vid[Vector2i(a, b + 1)]])
+	tris = qs
+	_build_topology()
+
+
+func _generate_layered(angles: Array, area: float) -> void:
+	## Hexagon lattices layered: the points of every lattice (each turned by its own angle about the middle of the island), those that fall within
+	## 0.4 of a lattice step of one already there dropped (so no cell is a sliver), and a cell round every point: its Voronoi cell, the polygon of the
+	## circumcentres of the Delaunay triangles round it. Every cell is convex, every corner is shared by exactly three cells that all touch.
+	var m := angles.size()
+	var step_len := sqrt(2.0 * area * float(m) * 0.9 / sqrt(3.0))          # the lattice step that makes the cells average about `area`
+	var rad := float(RINGS) * D_SPACING                                  # the island is as big as the full-size one
+	var reach := rad + 2.5 * step_len
+	var min_d := 0.4 * step_len
+	side = 0.55 * sqrt(area)
+	spacing = step_len
+	step = step_len
+	var e1 := Vector2(1.0, 0.0)
+	var e2 := Vector2(0.5, sqrt(3.0) * 0.5)
+	var hexd := func(p: Vector2) -> float:
+		# the "hex distance" of p: the circumradius of the regular hexagon (vertices on the lattice axes) through it
+		return maxf(maxf(absf(p.dot(Vector2.from_angle(deg_to_rad(30.0)))), absf(p.dot(Vector2.from_angle(deg_to_rad(90.0))))), absf(p.dot(Vector2.from_angle(deg_to_rad(150.0))))) * 2.0 / sqrt(3.0)
+	var pts: Array[Vector2] = []
+	var grid_cells := {}
+	var n := int(reach / step_len) + 3
+	for li in m:
+		var rot := deg_to_rad(float(angles[li]))
+		var cand: Array = []
+		for a in range(-n, n + 1):
+			for b in range(-n, n + 1):
+				var p := ((e1 * float(a) + e2 * float(b)) * step_len).rotated(rot)
+				if float(hexd.call(p)) <= reach:
+					cand.append(p)
+		cand.sort_custom(func(x: Vector2, y: Vector2) -> bool: return x.length_squared() < y.length_squared())
+		for p: Vector2 in cand:
+			var key := Vector2i(floori(p.x / min_d), floori(p.y / min_d))
+			var near := false
+			for dx in range(-1, 2):
+				for dz in range(-1, 2):
+					for q: Vector2 in grid_cells.get(Vector2i(key.x + dx, key.y + dz), []):
+						if q.distance_squared_to(p) < min_d * min_d:
+							near = true
+			if near:
+				continue
+			if not grid_cells.has(key):
+				grid_cells[key] = []
+			(grid_cells[key] as Array).append(p)
+			pts.append(p)
+	# triangulate, drop a point whose cell has a side shorter than `min_edge` (a sliver; the cell beside it takes its place) and triangulate again
+	var min_edge := 0.07 * step_len
+	var alive: Array[Vector2] = pts
+	var qs := PackedInt32Array()
+	for pass_no in 40:
+		verts.resize(0)
+		border.resize(0)
+		for p: Vector2 in alive:
+			verts.append(p)
+			border.append(1 if float(hexd.call(p)) > rad else 0)
+		var tri := Geometry2D.triangulate_delaunay(verts)
+		qs = PackedInt32Array()
+		for i in range(0, tri.size(), 3):
+			var a := tri[i]
+			var b := tri[i + 1]
+			var c := tri[i + 2]
+			var cr := (verts[b] - verts[a]).cross(verts[c] - verts[a])
+			if absf(cr) < 1e-9:
+				continue
+			if cr < 0.0:
+				var t := b
+				b = c
+				c = t
+			qs.append_array([a, b, c])
+		# the Voronoi side between two points is the distance between the circumcentres of the two triangles that share their edge
+		var edge_q := {}
+		var drop := {}
+		for q in qs.size() / 3:
+			var cc := _circumcentre(verts[qs[q * 3]], verts[qs[q * 3 + 1]], verts[qs[q * 3 + 2]])
+			for k in 3:
+				var u := qs[q * 3 + k]
+				var w := qs[q * 3 + (k + 1) % 3]
+				var key := mini(u, w) * 1048576 + maxi(u, w)
+				if edge_q.has(key):
+					var other: Vector2 = edge_q[key]
+					if other.distance_to(cc) < min_edge and (float(hexd.call(verts[u])) < reach - step_len and float(hexd.call(verts[w])) < reach - step_len):
+						# drop the one farther from the middle (the lattice drawn first keeps its points)
+						drop[u if verts[u].length_squared() > verts[w].length_squared() else w] = true
+				else:
+					edge_q[key] = cc
+		if drop.is_empty():
+			break
+		var next: Array[Vector2] = []
+		for i in alive.size():
+			if not drop.has(i):
+				next.append(alive[i])
+		alive = next
+	d_count = verts.size()
+	tris = qs
+	_build_topology()
+
+
+static func _circumcentre(a: Vector2, b: Vector2, c: Vector2) -> Vector2:
+	var d := 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y))
+	if absf(d) < 1e-12:
+		return (a + b + c) / 3.0
+	var a2 := a.length_squared()
+	var b2 := b.length_squared()
+	var c2 := c.length_squared()
+	return Vector2((a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d, (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d)
 
 
 func _build_topology() -> void:
+	_hs = HASH if (kind == KIND_LAYER or kind == KIND_LAYER3) else spacing * 1.16
+	_hash.clear()
 	var nv := verts.size()
-	var nq := quads.size() / fn
+	var nq := tris.size() / 3
 	centers.resize(nq)
 	_mid.clear()
-	var around: Array = []                    # per vertex: [face, prev neighbour, next neighbour]
+	var around: Array = []                    # per point: [face, prev neighbour, next neighbour]
 	around.resize(nv)
 	for i in nv:
 		around[i] = []
 	for q in nq:
-		var c := Vector2.ZERO
-		for k in fn:
-			c += verts[quads[q * fn + k]]
-		centers[q] = c / float(fn)
-		if fn == 3 and circ_blend > 0.0:
-			centers[q] = centers[q].lerp(_circumcentre(verts[quads[q * 3]], verts[quads[q * 3 + 1]], verts[quads[q * 3 + 2]], centers[q]), circ_blend)
-		for k in fn:
-			var v := quads[q * fn + k]
-			var nx := quads[q * fn + (k + 1) % fn]
-			var pv := quads[q * fn + (k + fn - 1) % fn]
+		# the cell corner of face (dodecagon, dodecagon, triangle): on the shared side of the two dodecagons, half a side from its
+		# middle towards the triangle (the other end of that side is the corner of the face on the triangle's other flank)
+		if kind == KIND_LAYER or kind == KIND_LAYER3:
+			centers[q] = _circumcentre(verts[tris[q * 3]], verts[tris[q * 3 + 1]], verts[tris[q * 3 + 2]])
+		elif kind == KIND_HEX:
+			centers[q] = (verts[tris[q * 3]] + verts[tris[q * 3 + 1]] + verts[tris[q * 3 + 2]]) / 3.0
+		else:
+			var da := verts[tris[q * 3]]
+			var db := verts[tris[q * 3 + 1]]
+			var mid_ab := (da + db) * 0.5
+			centers[q] = mid_ab + (verts[tris[q * 3 + 2]] - mid_ab).normalized() * (side * 0.5)
+		for k in 3:
+			var v := tris[q * 3 + k]
+			var nx := tris[q * 3 + (k + 1) % 3]
+			var pv := tris[q * 3 + (k + 2) % 3]
 			(around[v] as Array).append([q, nx, pv])
 			var ek := edge_key(v, nx)
 			if not _mid.has(ek):
 				_mid[ek] = (verts[v] + verts[nx]) * 0.5
 	nbrs.resize(nv)
 	rings.resize(nv)
+	cells.resize(nv)
 	_hash.clear()
 	for v in nv:
 		var items: Array = around[v]
-		# order the quads round v counter-clockwise: quad (v, nx, ., pv) spans nx -> pv going counter-clockwise
+		# order the triangles round v counter-clockwise: triangle (v, nx, pv) spans nx -> pv going counter-clockwise
 		items.sort_custom(func(x: Array, y: Array) -> bool:
 			return (centers[x[0]] - verts[v]).angle() < (centers[y[0]] - verts[v]).angle())
 		var nb := PackedInt32Array()
@@ -424,27 +372,22 @@ func _build_topology() -> void:
 			rg.append(-1)
 		nbrs[v] = nb
 		rings[v] = rg
-		var hk := Vector2i(floori(verts[v].x / step), floori(verts[v].y / step))
+		var poly := PackedVector2Array()
+		for q in rg:
+			if q >= 0:
+				poly.append(centers[q])
+		cells[v] = poly
+		var hk := Vector2i(floori(verts[v].x / _hs), floori(verts[v].y / _hs))
 		if not _hash.has(hk):
 			_hash[hk] = []
 		(_hash[hk] as Array).append(v)
 
 
-static func _circumcentre(a: Vector2, b: Vector2, c: Vector2, fallback: Vector2) -> Vector2:
-	var d := 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y))
-	if absf(d) < 1e-9:
-		return fallback
-	var a2 := a.length_squared()
-	var b2 := b.length_squared()
-	var c2 := c.length_squared()
-	return Vector2((a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d,
-		(a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d)
-
-
 # --- queries ---------------------------------------------------------------------------------------
 
 func buildable(v: int) -> bool:
-	if v < 0 or v >= verts.size() or border[v]:
+	## A dodecagon with a full ring of faces, not on the sea ring. The triangles between them are too small to build on.
+	if v < 0 or v >= d_count or border[v]:
 		return false
 	for q in rings[v]:
 		if q < 0:
@@ -453,12 +396,16 @@ func buildable(v: int) -> bool:
 
 
 func nearest(p: Vector2, only_buildable: bool = true) -> int:
-	var hk := Vector2i(floori(p.x / step), floori(p.y / step))
+	## The point whose cell contains p (a dodecagon is far wider than a triangle, so the nearest centre is not the cell p is in). A p over a
+	## cell that is not buildable (the sea ring) gives the nearest buildable point instead; one outside every cell, the nearest point.
+	var hk := Vector2i(floori(p.x / _hs), floori(p.y / _hs))
 	var best := -1
 	var bd := INF
 	for dx in range(-1, 2):
 		for dz in range(-1, 2):
 			for v: int in _hash.get(Vector2i(hk.x + dx, hk.y + dz), []):
+				if _in_cell(v, p) and (not only_buildable or buildable(v)):
+					return v
 				if only_buildable and not buildable(v):
 					continue
 				var d := verts[v].distance_squared_to(p)
@@ -468,9 +415,146 @@ func nearest(p: Vector2, only_buildable: bool = true) -> int:
 	return best
 
 
+func points_in_rect(lo: Vector2, hi: Vector2) -> PackedInt32Array:
+	## The points (cells' middles) inside the rectangle lo..hi, in the order of their ids.
+	var out := PackedInt32Array()
+	for cx in range(floori(lo.x / _hs), floori(hi.x / _hs) + 1):
+		for cz in range(floori(lo.y / _hs), floori(hi.y / _hs) + 1):
+			for v: int in _hash.get(Vector2i(cx, cz), []):
+				var p := verts[v]
+				if p.x >= lo.x and p.x <= hi.x and p.y >= lo.y and p.y <= hi.y:
+					out.append(v)
+	out.sort()
+	return out
+
+
+func _in_cell(v: int, p: Vector2) -> bool:
+	## p inside v's convex cell (counter-clockwise polygon)?
+	var poly: PackedVector2Array = cells[v]
+	var n := poly.size()
+	if n < 3:
+		return false
+	for i in n:
+		if (poly[(i + 1) % n] - poly[i]).cross(p - poly[i]) < -1e-9:
+			return false
+	return true
+
+
+const DIR_COUNTS := [12, 16, 24]     # the directions a straight wall may take: 12 (every 30 degrees: the lines of the grid), 16 (22.5), 24 (15)
+
+
+static func snap_direction(d: Vector2, count: int = 12) -> Vector2:
+	## d turned to the nearest of `count` evenly spaced directions, counting from 0 degrees (12: multiples of 30 degrees, the lines of both
+	## hexagon grids; 16: multiples of 22.5; 24: multiples of 15).
+	var step_angle := TAU / float(maxi(count, 4))
+	return Vector2.from_angle(roundf(d.angle() / step_angle) * step_angle)
+
+
+static func on_lattice(dir: Vector2) -> bool:
+	## Does dir run along one of the grid's 12 lines (a multiple of 30 degrees)?
+	var a := rad_to_deg(dir.angle()) / 30.0
+	return absf(a - roundf(a)) < 0.002
+
+
+func wall_stops(a: Vector2, dir: Vector2, max_len: float) -> PackedFloat32Array:
+	## Where a straight wall from the middle of a cell may end along dir: along a line of the grid (line_stops) where the middle of a cell lies
+	## on the line, along any other direction (the 16 and 24 direction walls) every half cell spacing, as far as the last whole cell the wall
+	## passes. (Such a wall crosses cells anywhere; it keeps clear of a block's corners through the audit of the build, not by where it ends.)
+	if on_lattice(dir):
+		return line_stops(a, dir, max_len)
+	var out := PackedFloat32Array()
+	var unit := spacing * 0.5
+	var d := dir.normalized()
+	var s := unit
+	while s <= max_len + 1e-4:
+		out.append(s)
+		s += unit
+	return out
+
+
+func cells_along(a: Vector2, b: Vector2, only_buildable: bool = true) -> PackedInt32Array:
+	## The points whose cells the segment a-b passes through or runs along (a cell it only grazes within 2 cm counts), in the order it meets
+	## them. Along the line through the middles of a row of dodecagons that is the row; along one of the 30 degree lines it goes through
+	## dodecagon, triangle, then runs along the shared side of two dodecagons (both count) and on through the next triangle.
+	var lo := a.min(b) - Vector2(_hs, _hs)
+	var hi := a.max(b) + Vector2(_hs, _hs)
+	var found: Array = []
+	for cx in range(floori(lo.x / _hs), floori(hi.x / _hs) + 1):
+		for cz in range(floori(lo.y / _hs), floori(hi.y / _hs) + 1):
+			for v: int in _hash.get(Vector2i(cx, cz), []):
+				if only_buildable and not buildable(v):
+					continue
+				var t := _enter(v, a, b)
+				if t >= 0.0:
+					found.append([t, v])
+	found.sort_custom(func(x: Array, y: Array) -> bool: return x[0] < y[0] or (x[0] == y[0] and x[1] < y[1]))
+	var out := PackedInt32Array()
+	for f: Array in found:
+		out.append(int(f[1]))
+	return out
+
+
+func is_whole(v: int) -> bool:
+	## A point whose cell is a whole polygon, off the sea ring (a dodecagon or a triangle).
+	if v < 0 or v >= verts.size() or border[v]:
+		return false
+	for q in rings[v]:
+		if q < 0:
+			return false
+	return true
+
+
+func line_stops(a: Vector2, dir: Vector2, max_len: float) -> PackedFloat32Array:
+	## Where along the line from a (the middle of a cell) a straight wall may end: the distances, nearest first, at which the middle of a whole cell
+	## (a dodecagon or a triangle) lies exactly on the line. A wall ending at the middle of a cell keeps its end face clear of the cell's
+	## sides and corners. Along the lines through a row of dodecagons that is every D_SPACING; along the 30 degree lines (they run along the
+	## sides between two rows) the triangles' middles and the second neighbours' come in between.
+	var out := PackedFloat32Array()
+	var d := dir.normalized()
+	for v in cells_along(a, a + d * max_len, false):
+		if not is_whole(v):
+			continue
+		var r := verts[v] - a
+		var s := r.dot(d)
+		if s > 0.5 and absf(r.cross(d)) < 0.02:
+			out.append(s)
+	var arr := Array(out)
+	arr.sort()
+	return PackedFloat32Array(arr)
+
+
+func _enter(v: int, a: Vector2, b: Vector2) -> float:
+	## Where along a-b (0..1) the segment enters v's convex cell (widened by 2 cm); -1 when it misses the cell.
+	var poly: PackedVector2Array = cells[v]
+	var n := poly.size()
+	if n < 3:
+		return -1.0
+	var d := b - a
+	var t0 := 0.0
+	var t1 := 1.0
+	for i in n:
+		var p := poly[i]
+		var e := poly[(i + 1) % n] - p
+		var nrm := Vector2(-e.y, e.x).normalized()          # into the cell (counter-clockwise polygon)
+		var dist := (a - p).dot(nrm) + 0.02                 # >= 0: inside this side's half plane
+		var slope := d.dot(nrm)
+		if absf(slope) < 1e-9:
+			if dist < 0.0:
+				return -1.0
+			continue
+		var t := -dist / slope
+		if slope > 0.0:
+			t0 = maxf(t0, t)
+		else:
+			t1 = minf(t1, t)
+		if t0 > t1:
+			return -1.0
+	return t0
+
+
 func dual(v: int) -> PackedVector2Array:
-	## The cell a block on v fills: the centres of the quads round v, counter-clockwise (Townscaper's dual grid). Two
-	## neighbouring cells share the straight side between the two quad centres on their common edge.
+	## The cell a block on v fills: the centres of the triangles round v, counter-clockwise (Townscaper's dual grid). Two
+	## neighbouring cells share the straight side between the two triangle centres on their common edge.
 	var out := PackedVector2Array()
 	var rg: PackedInt32Array = rings[v]
 	for i in rg.size():
@@ -480,7 +564,7 @@ func dual(v: int) -> PackedVector2Array:
 
 
 func face(v: int, i: int) -> PackedVector2Array:
-	## The side of v's cell facing neighbour i: from the centre of the quad before it to the centre of the quad after.
+	## The side of v's cell facing neighbour i: from the centre of the triangle before it to the centre of the triangle after.
 	var rg: PackedInt32Array = rings[v]
 	var n := rg.size()
 	return PackedVector2Array([centers[rg[(i + n - 1) % n]], centers[rg[i]]])

@@ -4,8 +4,8 @@ extends RefCounted
 ## cell at a time like the castle's blocks, and each turning into something different depending on what is round it.
 ##
 ## Ground. Every column with land, a height (mountain m / rock r levels), trees, or standing on a castle courtyard is a cell of one
-## terrain mesh. A cell's centre has the height of its own levels; each of its corners (the centre of a quad of the grid, shared by four
-## columns) has one height for everybody, the mean of the four columns' heights, so the cells join without a crack. Between the centre
+## terrain mesh. A cell's centre has the height of its own levels; each of its corners (the centre of a triangle of the grid, shared by three
+## columns) has one height for everybody, the mean of the three columns' heights, so the cells join without a crack. Between the centre
 ## and a corner the cell's own profile decides the shape: a mountain falls away fast from its summit, a rock keeps a plateau and ends in a
 ## cliff, plain land is a gentle swell; ridged noise roughens the slopes. A corner touching castle land is flat at the castle's ground
 ## height (CSBuild.B), so land meets the castle flush. Coast edges get a bank (beach) or a cliff, depending on how high the corner is.
@@ -27,7 +27,7 @@ var garden := {}                # v -> true: wild columns on a castle courtyard 
 var deck := {}                  # v -> true: road-only columns over water (bridges and jetties)
 var extra := {}                 # v -> height of the column above G
 var sharp := {}                 # v -> share of rock in the column's height levels, 0..1
-var corner := {}                # quad id -> corner height above G
+var corner := {}                # triangle id -> corner height above G
 var cell_tris := {}             # v -> PackedVector3Array (flat triangle list) for height_at
 var mesh_arrays := {}           # the terrain surface, filled by build_terrain
 var faces := PackedVector3Array()   # triangles for the collision shape
@@ -72,6 +72,21 @@ func _classify() -> void:
 			ground[v] = true
 		elif town.wild_road(v):
 			deck[v] = true
+	# the little triangles between the dodecagons are no cells of the landscape, but the ground goes across them when two of the three
+	# dodecagons round one have ground (or castle land) under them: no hole, no coast round a pit
+	var tri_ground := {}
+	for v: int in ground.keys():
+		for u: int in grid.nbrs[v]:
+			if grid.is_dodecagon(u) or not grid.is_whole(u) or castle_land.has(u) or tri_ground.has(u):
+				continue
+			var n := 0
+			for d: int in grid.nbrs[u]:
+				if ground.has(d) or garden.has(d) or castle_land.has(d):
+					n += 1
+			if n >= 2:
+				tri_ground[u] = true
+	for u: int in tri_ground:
+		ground[u] = true
 
 
 func is_land(v: int) -> bool:
@@ -84,6 +99,27 @@ func altitude(v: int) -> float:
 
 func _heights() -> void:
 	for v: int in ground:
+		if not grid.is_dodecagon(v):
+			# a triangle between three dodecagons: the mean height of those that have ground of their own
+			var sx := 0.0
+			var sr := 0.0
+			var cnt := 0
+			for d: int in grid.nbrs[v]:
+				if ground.has(d) and grid.is_dodecagon(d):
+					cnt += 1
+			for d: int in grid.nbrs[v]:
+				if ground.has(d) and grid.is_dodecagon(d):
+					var hd := town.wild_heights(d)
+					var ed := 0.0
+					var rd := 0
+					for i in hd.length():
+						ed += MT_LEVEL if hd[i] == "m" else RK_LEVEL
+						rd += 0 if hd[i] == "m" else 1
+					sx += ed
+					sr += float(rd) / float(hd.length()) if hd.length() > 0 else 0.0
+			extra[v] = sx / float(maxi(cnt, 1))
+			sharp[v] = sr / float(maxi(cnt, 1))
+			continue
 		var h := town.wild_heights(v)
 		var e := 0.0
 		var rocks := 0
@@ -95,22 +131,22 @@ func _heights() -> void:
 				rocks += 1
 		extra[v] = e
 		sharp[v] = float(rocks) / float(h.length()) if h.length() > 0 else 0.0
-	# a corner's height: the mean of the columns round the quad's centre, flat where the castle's land touches
+	# a corner's height: the mean of the columns round the triangle's centre, flat where the castle's land touches
 	for v: int in ground:
 		for q in grid.rings[v]:
 			if q < 0 or corner.has(q):
 				continue
 			var sum := 0.0
 			var flat := false
-			for i in grid.fn:
-				var u := grid.quads[q * grid.fn + i]
+			for i in 3:
+				var u := grid.tris[q * 3 + i]
 				if castle_land.has(u) or garden.has(u):
 					flat = true
 				sum += float(extra.get(u, 0.0))
-			var c := sum / float(grid.fn) * 1.3
+			var c := sum / 3.0 * 1.3
 			var mx := 0.0
-			for i in grid.fn:
-				mx = maxf(mx, float(extra.get(grid.quads[q * grid.fn + i], 0.0)))
+			for i in 3:
+				mx = maxf(mx, float(extra.get(grid.tris[q * 3 + i], 0.0)))
 			corner[q] = 0.0 if flat else minf(c, mx)
 
 
@@ -368,6 +404,8 @@ func normal_at(p: Vector2) -> Vector3:
 func ctx(v: int) -> Dictionary:
 	var c := {"water": 0, "rock": 0, "mount": 0, "road": 0, "castle": 0, "tree": 0, "land": 0, "deck": 0}
 	for u: int in grid.nbrs[v]:
+		if not grid.is_dodecagon(u):
+			continue                         # the little triangles between the dodecagons are not neighbours of the landscape
 		if not grid.buildable(u):
 			c.water += 1
 		elif town.top(u) >= 0 or (castle_land.has(u) and str(castle_land[u]) != "court"):

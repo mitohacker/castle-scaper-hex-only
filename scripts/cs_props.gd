@@ -103,6 +103,7 @@ var kept: Array = []
 var fixed: Array = []           # the openings' boxes (kept before any prop)
 var counts := {}                # kind name -> props kept
 var stats := {}
+var _sides_memo := {}               # key(v, k) -> _sides(v, k)
 var _hash := {}                 # Vector2i -> [Box]: kept boxes and openings
 var _solid := {}                # Vector2i -> [grid points with land or blocks whose cell reaches that hash cell]
 var _rad := {}                  # grid point -> how far its cell reaches from it
@@ -290,7 +291,7 @@ func _block_pieces(v: int, k: int) -> Array:
 
 
 func _land_pieces(v: int) -> Array:
-	## The whole cell (the land's own outline is pinched inside it, so this errs on the safe side).
+	## The whole cell (the land's own outline lies inside it, so this errs on the safe side).
 	if not _land_p.has(v):
 		_land_p[v] = b.polys_of(v, grid.dual(v))
 	return _land_p[v]
@@ -298,7 +299,16 @@ func _land_pieces(v: int) -> Array:
 
 func _sides(v: int, k: int) -> Array:
 	## The open sides of block (v, k): [i, middle, way out, length]. A round block's side is where the way to
-	## neighbour i leaves the circle round the tower.
+	## neighbour i leaves the circle round the tower. (Kept per block: several rules ask, and a block next to a string of flags is asked again.)
+	var ck := CSTown.key(v, k)
+	if _sides_memo.has(ck):
+		return _sides_memo[ck]
+	var out := _sides_of(v, k)
+	_sides_memo[ck] = out
+	return out
+
+
+func _sides_of(v: int, k: int) -> Array:
 	var out := []
 	var nb: PackedInt32Array = grid.nbrs[v]
 	var n := nb.size()
@@ -317,7 +327,7 @@ func _sides(v: int, k: int) -> Array:
 		var f0 := ol[(i + n - 1) % n]
 		var f1 := ol[i]
 		var len := f0.distance_to(f1)
-		if len < 1.2:
+		if len < 1.2 * CSBuild.FS:
 			continue
 		var along := (f1 - f0) / len
 		out.append([i, (f0 + f1) * 0.5, Vector2(along.y, -along.x), len])
@@ -343,9 +353,9 @@ func _fix_openings() -> void:
 		var bx: Box
 		match str(op.kind):
 			"door":
-				bx = box(o, bas, Vector3(-0.62, 0.0, 0.0), Vector3(0.62, h + 0.06, 1.0))
+				bx = box(o, bas, Vector3(-CSBuild.DOOR_HW - 0.03 * CSBuild.FS, 0.0, 0.0), Vector3(CSBuild.DOOR_HW + 0.03 * CSBuild.FS, h + 0.06, 1.0))
 			"window":
-				bx = box(o, bas, Vector3(-0.34, 0.0, 0.0), Vector3(0.34, h, 0.35))
+				bx = box(o, bas, Vector3(-float(op.hw), 0.0, 0.0), Vector3(float(op.hw), h, 0.35))
 			_:
 				bx = box(o, bas, Vector3(-0.15, 0.0, 0.0), Vector3(0.15, h, 0.35))
 		fixed.append(bx)
@@ -365,28 +375,30 @@ func _windows() -> void:
 		var bas := wall_basis(op.out)
 		var wall := town.colour(v, k)
 		var kk := CSTown.key(v, k)
+		var ws := float(op.hw) / 0.34            # a smaller cell, a narrower window: the frame, the shutters and the flower box go with it
 		var fr := _cand(FRAME, 1.0, CSBuild.h01(slot, k, 41), v, kk)
-		fr.boxes = [box(o, bas, Vector3(-0.45, -0.04, 0.0), Vector3(-0.34, 1.25, 0.06)),
-			box(o, bas, Vector3(0.34, -0.04, 0.0), Vector3(0.45, 1.25, 0.06)),
-			box(o, bas, Vector3(-0.49, 1.25, 0.0), Vector3(0.49, 1.44, 0.11)),
-			box(o, bas, Vector3(-0.51, -0.13, 0.0), Vector3(0.51, 0.0, 0.15))]
-		fr.inst = [[M_FRAME, Transform3D(bas, o), wall, wall]]
+		fr.boxes = [box(o, bas, Vector3(-0.45 * ws, -0.04, 0.0), Vector3(-0.34 * ws, 1.25, 0.06)),
+			box(o, bas, Vector3(0.34 * ws, -0.04, 0.0), Vector3(0.45 * ws, 1.25, 0.06)),
+			box(o, bas, Vector3(-0.49 * ws, 1.25, 0.0), Vector3(0.49 * ws, 1.44, 0.11)),
+			box(o, bas, Vector3(-0.51 * ws, -0.13, 0.0), Vector3(0.51 * ws, 0.0, 0.15))]
+		var bws := Basis(bas.x * ws, bas.y, bas.z)
+		fr.inst = [[M_FRAME, Transform3D(bws, o), wall, wall]]
 		if bool(op.round):
 			continue
 		if CSBuild.h01(slot, k, 42) < 0.6:
 			var sc := _pick(SHUTTER_COLS, CSBuild.h01(slot, k, 44), wall)
 			var sh := _cand(SHUTTERS, 2.0, CSBuild.h01(slot, k, 45), v, kk)
 			sh.needs = fr
-			for s: float in [-1.0, 1.0]:
-				var cx := 0.67 * s
-				sh.boxes.append(box(o, bas, Vector3(cx - 0.17, 0.0, 0.0), Vector3(cx + 0.17, 1.25, 0.05)))
-				sh.inst.append([M_SHUTTER, Transform3D(bas, o + bas.x * cx), wall, sc])
+			for sd: float in [-1.0, 1.0]:
+				var cx := 0.67 * ws * sd
+				sh.boxes.append(box(o, bas, Vector3(cx - 0.17 * ws, 0.0, 0.0), Vector3(cx + 0.17 * ws, 1.25, 0.05)))
+				sh.inst.append([M_SHUTTER, Transform3D(bws, o + bas.x * cx), wall, sc])
 		if CSBuild.h01(slot, k, 43) < 0.5:
 			var fc: int = BLOOM_COLS[int(CSBuild.h01(slot, k, 46) * float(BLOOM_COLS.size())) % BLOOM_COLS.size()]
 			var fl := _cand(FLOWERS, 3.0, CSBuild.h01(slot, k, 47), v, kk)
 			fl.needs = fr
-			fl.boxes = [box(o, bas, Vector3(-0.44, -0.63, 0.0), Vector3(0.44, -0.13, 0.32))]
-			fl.inst = [[M_FLOWERBOX, Transform3D(bas, o), wall, fc]]
+			fl.boxes = [box(o, bas, Vector3(-0.44 * ws, -0.63, 0.0), Vector3(0.44 * ws, -0.13, 0.32))]
+			fl.inst = [[M_FLOWERBOX, Transform3D(bws, o), wall, fc]]
 
 
 func _mount(op: Dictionary, dx: float) -> Array:
@@ -412,7 +424,7 @@ func _doors() -> void:
 		for side: float in [first, -first]:
 			if side != first and CSBuild.h01(slot, k, 82) > 0.35:
 				continue
-			var m := _mount(op, side * 0.95)
+			var m := _mount(op, side * 0.62 * CSBuild.FS)
 			var q: Vector2 = m[0]
 			var o := Vector3(q.x, float(op.y0) + 2.05, q.y)
 			var bas := wall_basis(m[1])
@@ -435,7 +447,7 @@ func _tower_spots(v: int, k: int, odd: bool) -> Array:
 			out.append([p + d * r, d, s])
 		return out
 	for sd: Array in _sides(v, k):
-		if float(sd[3]) >= 1.4:
+		if float(sd[3]) >= 1.2 * CSBuild.FS:
 			out.append([sd[1], sd[2], int(sd[0])])
 	return out
 
@@ -613,23 +625,23 @@ func _walks() -> void:
 		for sd: Array in _sides(v, k):
 			var i: int = sd[0]
 			var len: float = sd[3]
-			if len < 2.2:
+			if len < 1.3 * CSBuild.FS:
 				continue
 			var roll := CSBuild.h01(v * 16 + i, k, 63)
 			var mid: Vector2 = sd[1]
 			var bas := wall_basis(sd[2])
 			var o := Vector3(mid.x, y, mid.y)
 			if roll < 0.24:
-				var w := minf(len - 0.8, 3.4)
-				if w < 1.4:
+				var w := minf(len - 0.3 * CSBuild.FS, 3.4)
+				if w < 1.0 * CSBuild.FS:
 					continue
 				var s := w / 2.0
 				var hc := _cand(HOARDING, 4.0, CSBuild.h01(v * 16 + i, k, 64), v, kk)
 				hc.boxes = [box(o, bas, Vector3(-1.08 * s, -1.25, 0.0), Vector3(1.08 * s, 1.0, 0.96))]
 				hc.inst = [[M_HOARDING, Transform3D(Basis(bas.x * s, bas.y, bas.z), o), wall, wall]]
 			elif roll < 0.55:
-				var w := minf(len - 0.6, 3.8)
-				if w < 1.0:
+				var w := minf(len - 0.3 * CSBuild.FS, 3.8)
+				if w < 0.8 * CSBuild.FS:
 					continue
 				var cc := _cand(CORBELS, 4.0, CSBuild.h01(v * 16 + i, k, 64), v, kk)
 				cc.boxes = [box(o, bas, Vector3(-w * 0.5, -0.6, 0.0), Vector3(w * 0.5, 0.0, 0.33))]
@@ -683,15 +695,17 @@ func _courts() -> void:
 			var f0 := ol[(j + n - 1) % n]
 			var f1 := ol[j]
 			var len := f0.distance_to(f1)
-			if len < 1.8:
+			if len < 1.2 * CSBuild.FS:
 				continue
 			var along := (f1 - f0) / len
 			var out := Vector2(along.y, -along.x)
-			for si in 2:
+			# a side of 1.39 m (every side of the double grid) holds one spot in the middle, a longer one two
+			var wide := len >= 4.0
+			for si in 2 if wide else 1:
 				var slot := u * 32 + i * 2 + si
 				if CSBuild.h01(slot, 0, 91) > 0.55:
 					continue
-				var q := (f0 + f1) * 0.5 + along * (0.27 if si == 1 else -0.27) * len
+				var q := (f0 + f1) * 0.5 + (along * (0.27 if si == 1 else -0.27) * len if wide else Vector2.ZERO)
 				var g := "court %d" % slot
 				var h := CSBuild.h01(slot, 0, 92)
 				var yaw := (CSBuild.h01(slot, 0, 94) - 0.5) * 0.4
@@ -703,11 +717,11 @@ func _courts() -> void:
 				if h < 0.4:
 					var b2 := wall_basis(out.rotated(yaw + (CSBuild.h01(slot, 0, 95) - 0.5) * 0.4))
 					crates.append([M_CRATE, foot + Vector3(0.0, 0.66, 0.0), b2, 0.34, 0.66])
-				elif h < 0.7:
+				elif h < 0.7 and wide:
 					crates.append([M_CRATE, foot + side * 0.74, bas, 0.34, 0.66])
 				_court_cand(CRATES, u, w, slot, g, crates)
 				var barrels := [[M_BARREL, foot, bas, 0.35, 0.86]]
-				if h > 0.5:
+				if h > 0.5 and wide:
 					barrels.append([M_BARREL, foot - side * 0.74, bas, 0.35, 0.86])
 				_court_cand(BARRELS, u, w, slot, g, barrels)
 
@@ -728,7 +742,7 @@ func _ornaments() -> void:
 			for sd: Array in _sides(v, k):
 				var i: int = sd[0]
 				var len: float = sd[3]
-				if len < 1.8:
+				if len < 1.2 * CSBuild.FS:
 					continue
 				var mid: Vector2 = sd[1]
 				var bas := wall_basis(sd[2])
@@ -740,11 +754,11 @@ func _ornaments() -> void:
 					sc.boxes = [box(o, bas, Vector3(-w * 0.5, 0.0, 0.0), Vector3(w * 0.5, 0.12, 0.1))]
 					sc.inst = [[M_STRING, Transform3D(Basis(bas.x * w, bas.y, bas.z), o), wall, wall]]
 				if sty != CSStyle.APARTMENT and CSBuild.h01(slot, k, 93) < (0.34 if k <= 1 else 0.12):
-					var iw := minf(len - 0.7, 1.6 + 1.4 * CSBuild.h01(slot, k, 94))
-					if iw < 1.0:
+					var iw := minf(len - 0.45 * CSBuild.FS, (0.8 + 0.6 * CSBuild.h01(slot, k, 94)) * CSBuild.FS)
+					if iw < 0.6 * CSBuild.FS:
 						continue
 					var ih := 2.0 + 1.6 * CSBuild.h01(slot, k, 95)
-					var dx := (len - 0.7 - iw) * (CSBuild.h01(slot, k, 96) - 0.5)
+					var dx := (len - 0.45 * CSBuild.FS - iw) * (CSBuild.h01(slot, k, 96) - 0.5)
 					var o2 := Vector3(mid.x, y0 + 0.2, mid.y) + bas.x * dx
 					var iv := _cand(IVY, 8.0, CSBuild.h01(slot, k, 97), v, CSTown.key(v, k))
 					iv.boxes = [box(o2, bas, Vector3(-iw * 0.5, 0.0, 0.0), Vector3(iw * 0.5, ih, 0.14))]
@@ -763,13 +777,14 @@ func _bunting() -> void:
 				continue
 			for sd: Array in _sides(v, k):
 				var i: int = sd[0]
-				if CSBuild.h01(v * 16 + i, k, 71) > 0.6:
-					continue
+				if CSBuild.h01(v * 16 + i, k, 71) > 1.0 - 0.4 * grid.cell:
+					continue                    # (a share of the sides in proportion to the cell: a small cell has more sides but not more flags)
 				var mid: Vector2 = sd[1]
 				var out: Vector2 = sd[2]
 				var w := -1
-				for st in 20:
-					var x := grid.nearest(mid + out * (2.4 + 0.6 * float(st)))
+				var ray := 0.6 / grid.cell              # the ray's step: a small cell is a smaller target but the flags still span the same distances
+				for st in ceili(20.0 * grid.cell):
+					var x := grid.nearest(mid + out * (2.4 + ray * float(st)))
 					if x < 0 or (not b.land.has(x) and b.top_of(x) < 0):
 						break                   # off the map, or out over the sea
 					if x != v and town.has(x, k):
