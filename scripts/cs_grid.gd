@@ -20,12 +20,21 @@ const SIDE := 1.3905934          # the side of every cell (m): the dodecagon has
 const TURN := 3.7320508075688772     # 2 + sqrt(3): the distance between two dodecagon centres in sides
 const D_SPACING := SIDE * TURN       # 5.19 m
 const RINGS := 20                    # dodecagon rings round the middle one: 1261 dodecagons, the outer ring is the sea (1141 buildable)
-const GRID_ID := "dodeca-2"          # saved towns say which grid their column numbers belong to
-const KIND_DODECA := "dodeca"        # the default: dodecagons (and unbuildable triangles between them)
-const KIND_HEX := "hex"              # the plain regular hexagon grid, also available (SPEC section 0): 1141 hexagons of 2.887 m side, 21.65 m2
+const GRID_ID := "dodeca-2"          # saved towns say which grid their column numbers belong to (this one: dodecagons of 21.65 m2)
+const KIND_DODECA := "dodeca"        # dodecagons (and unbuildable triangles between them)
+const KIND_HEX := "hex"              # the plain regular hexagon grid: 1141 hexagons of 2.887 m side, 21.65 m2 at the full size
 const HEX_ID := "hex-2"
+const KIND_LAYER := "layer"          # two hexagon lattices layered, one turned 30 degrees: a cell round every point of both (their Voronoi cells)
+const LAYER2_ID := "layer-2"
+const KIND_LAYER3 := "layer3"        # three lattices layered, turned 0, 20 and 40 degrees
+const LAYER3_ID := "layer3-2"
+const BASE_AREA := 12.5 * 1.7320508075688772   # 21.65 m2: the area of a cell at div 1 (the hexagon of side 5 / sqrt 3, the dodecagon of side SIDE)
+const DEFAULT_DIV := 2               # the cell size a new town starts with: half the area of the first version's cells
+const DIVS := [1, 2, 3, 4]           # the cell sizes: 1 / div of the area (div 1: 21.65 m2, 2: 10.8 m2, 3: 7.2 m2, 4: 5.4 m2)
 
 var kind := KIND_DODECA             # which cells: KIND_DODECA or KIND_HEX
+var div := 1                        # the cell size: 1 / div of the area of the full-size cell (the island stays as big, it has more cells)
+var cell := 1.0                     # ... as a length: 1 / sqrt(div)
 var side := SIDE                    # the side of every cell (m)
 var spacing := D_SPACING            # the distance between the middles of two neighbouring building cells (m)
 var step := D_SPACING               # (the size of the hash cells of the lookup)
@@ -53,16 +62,63 @@ func mid(a: int, b: int) -> Vector2:
 	return _mid.get(edge_key(a, b), (verts[a] + verts[b]) * 0.5)
 
 
-static func id_of(k: String) -> String:
-	## The tag a saved town carries for the cells of kind k.
-	return HEX_ID if k == KIND_HEX else GRID_ID
+static func id_of(k: String, d: int = 1) -> String:
+	## The tag a saved town carries for cells of kind k at 1 / d of the full area: "dodeca-2", "hex-2" (d = 1, the tags of the first versions), then
+	## "dodeca-2/2", "dodeca-2/3", "hex-2/2" ...
+	var base := GRID_ID
+	match k:
+		KIND_HEX:
+			base = HEX_ID
+		KIND_LAYER:
+			base = LAYER2_ID
+		KIND_LAYER3:
+			base = LAYER3_ID
+	return base if d <= 1 else "%s/%d" % [base, d]
 
 
 static func kind_of(id: String) -> String:
 	## The kind of cells a tag names, or "" for a tag of another grid.
-	if id == HEX_ID:
-		return KIND_HEX
-	return KIND_DODECA if id == GRID_ID else ""
+	match id.get_slice("/", 0):
+		HEX_ID:
+			return KIND_HEX
+		GRID_ID:
+			return KIND_DODECA
+		LAYER2_ID:
+			return KIND_LAYER
+		LAYER3_ID:
+			return KIND_LAYER3
+	return ""
+
+
+static func div_of(id: String) -> int:
+	## The cell size a tag names (1 for the tags without one).
+	if "/" in id:
+		return clampi(int(id.get_slice("/", 1)), 1, 16)
+	return 1
+
+
+static func parse_div(text: String) -> int:
+	## "2" or "1/2": the cell size as 1 / div of the area.
+	var parts := text.split("/")
+	return clampi(int(parts[parts.size() - 1]), 1, 16)
+
+
+static func variants() -> Array:
+	## The grids the game offers, in the order the Cells button goes through them: [kind, div]. The first is the default (12-sided cells at half the
+	## area); the layered lattices (KIND_LAYER, KIND_LAYER3) are experiments, reachable with --cs-grid=layer only: their cells are irregular.
+	return [[KIND_DODECA, DEFAULT_DIV], [KIND_DODECA, 3], [KIND_DODECA, 1], [KIND_HEX, 2], [KIND_HEX, 3], [KIND_HEX, 1]]
+
+
+static func variant_name(k: String, d: int) -> String:
+	var shape := "12 sides"
+	match k:
+		KIND_HEX:
+			shape = "6 sides"
+		KIND_LAYER:
+			shape = "2 layers"
+		KIND_LAYER3:
+			shape = "3 layers"
+	return shape if d <= 1 else "%s, 1/%d area" % [shape, d]
 
 
 func is_dodecagon(v: int) -> bool:
@@ -70,16 +126,23 @@ func is_dodecagon(v: int) -> bool:
 	return v < d_count
 
 
-func generate(p_seed: int = 1, p_radius: int = RINGS, p_kind: String = KIND_DODECA) -> void:
+func generate(p_seed: int = 1, p_radius: int = 0, p_kind: String = KIND_DODECA, p_div: int = 1) -> void:
+	## p_radius 0: as many rings as keep the island as big as the full-size one (RINGS rings of full-size cells).
 	seed = p_seed
-	radius = clampi(p_radius, 2, 24)
 	kind = p_kind
+	div = maxi(p_div, 1)
+	cell = 1.0 / sqrt(float(div))
+	radius = clampi(p_radius if p_radius > 0 else roundi(float(RINGS) / cell), 2, 60)
 	var n := radius
 	if kind == KIND_HEX:
 		_generate_hex(n)
 		return
-	side = SIDE
-	spacing = D_SPACING
+	if kind == KIND_LAYER or kind == KIND_LAYER3:
+		_generate_layered([0.0, 30.0] if kind == KIND_LAYER else [0.0, 20.0, 40.0], BASE_AREA / float(div))
+		return
+	side = SIDE * cell
+	spacing = D_SPACING * cell
+	step = spacing
 	var e1 := Vector2(1.0, 0.0)
 	var e2 := Vector2(0.5, sqrt(3.0) * 0.5)
 	var inside := func(a: int, b: int) -> bool:
@@ -92,7 +155,7 @@ func generate(p_seed: int = 1, p_radius: int = RINGS, p_kind: String = KIND_DODE
 		for b in range(-n, n + 1):
 			if inside.call(a, b):
 				did[Vector2i(a, b)] = verts.size()
-				verts.append((e1 * float(a) + e2 * float(b)) * D_SPACING)
+				verts.append((e1 * float(a) + e2 * float(b)) * spacing)
 				border.append(1 if (absi(a) == n or absi(b) == n or absi(a + b) == n) else 0)
 	d_count = verts.size()
 	# a triangle in every gap between three dodecagons (the lattice triangles pointing up and down), and three faces round it
@@ -117,8 +180,9 @@ func generate(p_seed: int = 1, p_radius: int = RINGS, p_kind: String = KIND_DODE
 func _generate_hex(n: int) -> void:
 	## The regular hexagon grid: a triangle lattice of 5 m cut to a hexagon of n rings, a cell round every point (the centroids of the six
 	## triangles round it): regular hexagons of 2.887 m side, pointy-top.
-	side = 5.0 / sqrt(3.0)
-	spacing = 5.0
+	side = 5.0 / sqrt(3.0) * cell
+	spacing = 5.0 * cell
+	step = spacing
 	var e1 := Vector2(1.0, 0.0)
 	var e2 := Vector2(0.5, sqrt(3.0) * 0.5)
 	var inside := func(a: int, b: int) -> bool:
@@ -144,6 +208,111 @@ func _generate_hex(n: int) -> void:
 	_build_topology()
 
 
+func _generate_layered(angles: Array, area: float) -> void:
+	## Hexagon lattices layered: the points of every lattice (each turned by its own angle about the middle of the island), those that fall within
+	## 0.4 of a lattice step of one already there dropped (so no cell is a sliver), and a cell round every point: its Voronoi cell, the polygon of the
+	## circumcentres of the Delaunay triangles round it. Every cell is convex, every corner is shared by exactly three cells that all touch.
+	var m := angles.size()
+	var step_len := sqrt(2.0 * area * float(m) * 0.9 / sqrt(3.0))          # the lattice step that makes the cells average about `area`
+	var rad := float(RINGS) * D_SPACING                                  # the island is as big as the full-size one
+	var reach := rad + 2.5 * step_len
+	var min_d := 0.4 * step_len
+	side = 0.55 * sqrt(area)
+	spacing = step_len
+	step = step_len
+	var e1 := Vector2(1.0, 0.0)
+	var e2 := Vector2(0.5, sqrt(3.0) * 0.5)
+	var hexd := func(p: Vector2) -> float:
+		# the "hex distance" of p: the circumradius of the regular hexagon (vertices on the lattice axes) through it
+		return maxf(maxf(absf(p.dot(Vector2.from_angle(deg_to_rad(30.0)))), absf(p.dot(Vector2.from_angle(deg_to_rad(90.0))))), absf(p.dot(Vector2.from_angle(deg_to_rad(150.0))))) * 2.0 / sqrt(3.0)
+	var pts: Array[Vector2] = []
+	var grid_cells := {}
+	var n := int(reach / step_len) + 3
+	for li in m:
+		var rot := deg_to_rad(float(angles[li]))
+		var cand: Array = []
+		for a in range(-n, n + 1):
+			for b in range(-n, n + 1):
+				var p := ((e1 * float(a) + e2 * float(b)) * step_len).rotated(rot)
+				if float(hexd.call(p)) <= reach:
+					cand.append(p)
+		cand.sort_custom(func(x: Vector2, y: Vector2) -> bool: return x.length_squared() < y.length_squared())
+		for p: Vector2 in cand:
+			var key := Vector2i(floori(p.x / min_d), floori(p.y / min_d))
+			var near := false
+			for dx in range(-1, 2):
+				for dz in range(-1, 2):
+					for q: Vector2 in grid_cells.get(Vector2i(key.x + dx, key.y + dz), []):
+						if q.distance_squared_to(p) < min_d * min_d:
+							near = true
+			if near:
+				continue
+			if not grid_cells.has(key):
+				grid_cells[key] = []
+			(grid_cells[key] as Array).append(p)
+			pts.append(p)
+	# triangulate, drop a point whose cell has a side shorter than `min_edge` (a sliver; the cell beside it takes its place) and triangulate again
+	var min_edge := 0.07 * step_len
+	var alive: Array[Vector2] = pts
+	var qs := PackedInt32Array()
+	for pass_no in 40:
+		verts.resize(0)
+		border.resize(0)
+		for p: Vector2 in alive:
+			verts.append(p)
+			border.append(1 if float(hexd.call(p)) > rad else 0)
+		var tri := Geometry2D.triangulate_delaunay(verts)
+		qs = PackedInt32Array()
+		for i in range(0, tri.size(), 3):
+			var a := tri[i]
+			var b := tri[i + 1]
+			var c := tri[i + 2]
+			var cr := (verts[b] - verts[a]).cross(verts[c] - verts[a])
+			if absf(cr) < 1e-9:
+				continue
+			if cr < 0.0:
+				var t := b
+				b = c
+				c = t
+			qs.append_array([a, b, c])
+		# the Voronoi side between two points is the distance between the circumcentres of the two triangles that share their edge
+		var edge_q := {}
+		var drop := {}
+		for q in qs.size() / 3:
+			var cc := _circumcentre(verts[qs[q * 3]], verts[qs[q * 3 + 1]], verts[qs[q * 3 + 2]])
+			for k in 3:
+				var u := qs[q * 3 + k]
+				var w := qs[q * 3 + (k + 1) % 3]
+				var key := mini(u, w) * 1048576 + maxi(u, w)
+				if edge_q.has(key):
+					var other: Vector2 = edge_q[key]
+					if other.distance_to(cc) < min_edge and (float(hexd.call(verts[u])) < reach - step_len and float(hexd.call(verts[w])) < reach - step_len):
+						# drop the one farther from the middle (the lattice drawn first keeps its points)
+						drop[u if verts[u].length_squared() > verts[w].length_squared() else w] = true
+				else:
+					edge_q[key] = cc
+		if drop.is_empty():
+			break
+		var next: Array[Vector2] = []
+		for i in alive.size():
+			if not drop.has(i):
+				next.append(alive[i])
+		alive = next
+	d_count = verts.size()
+	tris = qs
+	_build_topology()
+
+
+static func _circumcentre(a: Vector2, b: Vector2, c: Vector2) -> Vector2:
+	var d := 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y))
+	if absf(d) < 1e-12:
+		return (a + b + c) / 3.0
+	var a2 := a.length_squared()
+	var b2 := b.length_squared()
+	var c2 := c.length_squared()
+	return Vector2((a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d, (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d)
+
+
 func _build_topology() -> void:
 	var nv := verts.size()
 	var nq := tris.size() / 3
@@ -156,13 +325,15 @@ func _build_topology() -> void:
 	for q in nq:
 		# the cell corner of face (dodecagon, dodecagon, triangle): on the shared side of the two dodecagons, half a side from its
 		# middle towards the triangle (the other end of that side is the corner of the face on the triangle's other flank)
-		if kind == KIND_HEX:
+		if kind == KIND_LAYER or kind == KIND_LAYER3:
+			centers[q] = _circumcentre(verts[tris[q * 3]], verts[tris[q * 3 + 1]], verts[tris[q * 3 + 2]])
+		elif kind == KIND_HEX:
 			centers[q] = (verts[tris[q * 3]] + verts[tris[q * 3 + 1]] + verts[tris[q * 3 + 2]]) / 3.0
 		else:
 			var da := verts[tris[q * 3]]
 			var db := verts[tris[q * 3 + 1]]
 			var mid_ab := (da + db) * 0.5
-			centers[q] = mid_ab + (verts[tris[q * 3 + 2]] - mid_ab).normalized() * (SIDE * 0.5)
+			centers[q] = mid_ab + (verts[tris[q * 3 + 2]] - mid_ab).normalized() * (side * 0.5)
 		for k in 3:
 			var v := tris[q * 3 + k]
 			var nx := tris[q * 3 + (k + 1) % 3]
@@ -251,10 +422,36 @@ func _in_cell(v: int, p: Vector2) -> bool:
 	return true
 
 
-static func snap_direction(d: Vector2) -> Vector2:
-	## d turned to the nearest of the grid's 12 directions (multiples of 30 degrees): the lines of both hexagon grids.
-	var step_angle := PI / 6.0
+const DIR_COUNTS := [12, 16, 24]     # the directions a straight wall may take: 12 (every 30 degrees: the lines of the grid), 16 (22.5), 24 (15)
+
+
+static func snap_direction(d: Vector2, count: int = 12) -> Vector2:
+	## d turned to the nearest of `count` evenly spaced directions, counting from 0 degrees (12: multiples of 30 degrees, the lines of both
+	## hexagon grids; 16: multiples of 22.5; 24: multiples of 15).
+	var step_angle := TAU / float(maxi(count, 4))
 	return Vector2.from_angle(roundf(d.angle() / step_angle) * step_angle)
+
+
+static func on_lattice(dir: Vector2) -> bool:
+	## Does dir run along one of the grid's 12 lines (a multiple of 30 degrees)?
+	var a := rad_to_deg(dir.angle()) / 30.0
+	return absf(a - roundf(a)) < 0.002
+
+
+func wall_stops(a: Vector2, dir: Vector2, max_len: float) -> PackedFloat32Array:
+	## Where a straight wall from the middle of a cell may end along dir: along a line of the grid (line_stops) where the middle of a cell lies
+	## on the line, along any other direction (the 16 and 24 direction walls) every half cell spacing, as far as the last whole cell the wall
+	## passes. (Such a wall crosses cells anywhere; it keeps clear of a block's corners through the audit of the build, not by where it ends.)
+	if on_lattice(dir):
+		return line_stops(a, dir, max_len)
+	var out := PackedFloat32Array()
+	var unit := spacing * 0.5
+	var d := dir.normalized()
+	var s := unit
+	while s <= max_len + 1e-4:
+		out.append(s)
+		s += unit
+	return out
 
 
 func cells_along(a: Vector2, b: Vector2, only_buildable: bool = true) -> PackedInt32Array:

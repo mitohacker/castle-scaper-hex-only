@@ -36,7 +36,7 @@ func _walls_from(spec: Array) -> CSTown:
 		var dir := Vector2.from_angle(deg_to_rad(float(s[1])))
 		var stops := grid.line_stops(grid.verts[v], dir, 80.0)
 		var len := stops[int(s[2]) - 1]
-		t.wall_add(v, int(s[1]), len, 3)
+		CSWalls.add_from_cell(t, grid, v, float(s[1]), len, 3)
 		cur = grid.nearest(grid.verts[v] + dir * len, false)
 		if not grid.is_dodecagon(cur):
 			cur = grid.nearest(grid.verts[v] + dir * len)

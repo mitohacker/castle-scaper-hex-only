@@ -19,6 +19,61 @@ replaced by click-to-stack, its castle rules by block rules, its stone paint by 
 itself is untouched. Townscaper was studied with REA + Ghidra (`C:\Dev\Prototypes\townscaper-re`, local only); its
 ideas were re-implemented, no code or assets were copied.
 
+## 0a. Round 3 (2026-10-19): smaller cells, merged walls, corners, wall directions
+
+Kevin tested the round-2 build (12-sided cells at the hexagon's size, free straight walls) and found it "not quite there yet": the cells are still too big
+("I want smaller grid... maybe double meaning more hex layered? experiment with it"), walls laid in layers should merge into a thicker one, the corners
+look wrong, and "I want 12 directions (is 12 okay? how about 16)". What was done, in his order:
+
+**1. The cell size is a setting (`CSGrid.div`, `CSTown.grid_div`, `--cs-cell=N`, saved in the grid tag as "dodeca-2/N").** A cell has 1 / div of the area of the
+round-2 cell (21.65 m2): its side and spacing scale by `cell = 1 / sqrt(div)`, the island stays as big (`radius = RINGS / cell` rings), so a smaller cell
+means more of them (div 2: 2282 buildable cells of 10.8 m2, side 0.98 m; div 3: 3423 of 7.2 m2, side 0.80 m). `CSBuild.set_scale(side, cell)` (every build)
+turns what used to be constants into variables scaled by `FS = clamp(side / 1.3906, 0.2, 1)`: the parapet, crenels, doors, windows, arches (pier,
+span limits, fewer courses on narrow arches: `ARCH_FR_SMALL`, `ARCH_FR_TINY`), pillars, stairs, the prop layer's thresholds and the straight wall's
+thickness (`WALL_THICK = 1.9 * cell`). Heights do not scale (a level is 4 m). The arch rule gained "an abutment that hangs is not an abutment" (an arch next
+to a corbelled block was left in the air at the small sizes). Both cell kinds scale (hexagons too).
+*Experiments, same castle, `shots/cells_comparison.jpg`:* 12-sided at 1/1, 1/2, 1/3 (clean; the castle reads best at 1/2, the walls are 3.7 m across and
+still take doors and windows; at 1/3 the cells are 2.7 m across and a block is a post: it works, the starter castle is simply made of more, smaller
+towers); hexagons at 1/2 (clean, but the sides are 1.7 m and the ring of towers looks coarser than the dodecagons); **layered hexagon lattices**
+(`--cs-grid=layer`: lattices turned 0 and 30 degrees; `layer3`: 0, 20 and 40 degrees; a block in the Voronoi cell of every point of the union, built with
+`CSGrid._generate_layered`): the cells come out as irregular 4- to 12-sided polygons of 19-81 m2 (layer) or 21-202 m2 (layer3) with sides from 0 to
+12 m, slivers need pruning and some stay, so no uniform size and no regular look: not viable, kept only as `--cs-grid=layer|layer3`, not in the H cycle.
+**The default is the 12-sided cell at 1/2 of the area** (`CSGrid.DEFAULT_DIV = 2`); the H cycle is 12-sided 1/2, 1/3, 1/1, hexagons 1/2, 1/3, 1/1. Saved castles
+remember grid and size; a save from round 2 ("dodeca-2") is div 1 and opens as it was.
+
+**2. Merging walls (`scripts/cs_walls.gd`, `CSWalls`).** A wall is `{x, z, deg, len, w, c}` (a save of round 2, `{v, deg, len, c}`, is put on the grid it
+names by `CSWalls.normalize`: from the middle of cell v, one thickness wide). Two walls merge when they are parallel (within 0.6 degrees, either way
+round), the gap between their strips is at most `GAP_LAT_K` = 1 thickness and the gap between their spans along the axis at most `GAP_AX_K` = 0.5
+thickness (overlap, touch, side by side a thickness apart, or end to end), and the result is at most `MAX_W_K` = 8 thicknesses wide. The merged wall is
+the bounding rectangle of the two in their common direction: width = the union of the two widths, length = the union of the spans, heading kept (so it
+stays on the active direction). The closest pair merges first, repeated until nothing merges (`CSWalls.merge`); it runs when a wall is added
+(`main.add_wall`: one undo step restores both) and when a save loads (`CSWalls.settle`, in `_adopt_grid` and at start). Walls at an angle never merge; their
+parapets follow the outline of the union (`_wall_loops`). *castle_004* (Kevin's 30 walls, `tools/castle004_list.gd`, `tools/merge_probe.gd`):
+30 -> 18 walls, one of them 14.9 m thick (eight of his collinear walls in layers at heading 90/270); the rest are single walls at other angles or too far
+apart (a row's spacing is more than a wall thickness plus the gap).
+
+**3. Corners (`scripts/cs_wall_joints.gd`, `CSWallJoints`; built by `CSBuild._walls`).** A wall is a rectangle, so a bend left a square notch outside and a
+thin wedge inside, and ends were bare cuts. Now: a **round tower** (16 sides, a circle that covers the whole squared end: radius = half the thickness x sqrt 2
++ 15 cm, kept 30 cm clear of the sides of other walls: `_clear_radius`, a thin lens of overlap or a hair-thin gap cannot be welded) stands on every free end
+and bend of a wall that is at most 2.6 thicknesses wide, one level high + `TOWER_RISE` 1.4 m, with its own ring of battlements (`_ring_top`, shared with the
+lone-tower battlements); two towers whose circles come within 60 cm of each other become one (the hull of both); an end buried in another wall gets none; a
+merged thick wall ends in a flat capped end. **Fills:** where two walls meet or cross at less than 75 degrees (`_fill`: arms either side of the joint,
+neighbours by angle) the wedge between their inner sides is filled by a triangle from the point where the inner sides cross to where the gap is 0.6
+thicknesses wide, so no sliver remains and the parapet turns round the filled corner. Notches are not cut within a tower's circle (`near_tower`) or over a block
+(`_over_block`: a notch is a CUT and would cut into a block the wall runs through). `CSWalls.robust` lengthens a wall by 6 cm steps where a corner of it comes within 10 cm of
+another wall's side without being on it (the outlines would meet in a sliver edge that cannot be welded); the saved wall is untouched. Round tower was
+chosen over a hexagon or a mitre: it hides the end of the rectangle at every angle (a mitre only mends a bend, not an end, and fails under 30 degrees),
+and it is the shape of the game's other towers. `tools/corner_gallery.gd` writes the picture town (`shots/wall_corners.jpg`: before / after),
+`tools/corner_probe.gd` audits every bend, crossing and T at every angle of the 12, 16 and 24 direction sets at several places on the grid.
+
+**4. Wall directions (`CSTown.wall_dirs` 12 | 16 | 24, `CSGrid.DIR_COUNTS`, key R, the Directions button, `--cs-dirs=`).** `CSGrid.snap_direction(d, count)` snaps to
+multiples of 360 / count degrees. Along a grid line (a multiple of 30 degrees) the wall ends where the middle of a cell lies on the line (`line_stops`),
+as before; along any other heading (22.5, 45, 67.5 ... with 16; 15, 45, 75 ... with 24) it ends every half cell spacing (`CSGrid.wall_stops`). The count is a
+setting of the castle: saved ("wall_dirs"), kept by undo, shown on the button ("Directions: 16 (R)") and in the cue while dragging ("Straight wall at 22.5 deg (16
+directions), 11.0 m long"). Walls are independent of the cells, so merging, corners and the towers work at every heading; what a non-lattice heading
+changes is only where a wall's sides fall against the cells' corners and a castle's battlements: 12 and 16 directions audit clean (0 defects in 80 towns x 5
+walls each), 24 directions had 2 defective towns of 80 (a wall's side within millimetres of a block's battlements); see section 8 for the numbers.
+
 ## 0. The double hex grid (2026-10-19)
 
 History: Kevin first wanted an organic grid, then regular hexagons (2026-10-18), then (2026-10-19): "I want a double hex grid, meaning there
@@ -390,18 +445,17 @@ while previewing, a message when the stroke is built or cancelled.
 cancels a stroke in progress, and the help line names the key. It applies to the castle types (the landscape types keep their cell by cell drag).
 With it on, a left press that moves more than 6 px starts a straight stroke instead of the cell-by-cell one. The stroke begins in the middle of the
 cell a click at the press would build on, at the sea level (pressing on top of a block says so and does nothing); its direction is
-`CSGrid.snap_direction` of the vector from there to where the pointer is on the ground, one of the grid's 12 headings (multiples of 30 degrees), so the
-wall always lies on a grid line; its length is the one of `CSGrid.line_stops` (the distances at which the middle of a cell lies exactly on the line)
-nearest to the pointer's shadow on the line (no wall before the pointer has gone half way to the first stop), shortened until every cell the wall
-crosses is on the island. What it previews and builds is **one straight wall**, not cells: `town.walls` holds `{v, deg, len, c}`; the ghost is one
+`CSGrid.snap_direction(d, town.wall_dirs)` of the vector from there to where the pointer is on the ground, one of the 12, 16 or 24 wall directions
+(R, the Directions button; 12 = multiples of 30 degrees: the grid's lines); its length is the one of `CSGrid.wall_stops` (on a grid line: `line_stops`, the distances
+at which the middle of a cell lies exactly on the line; on any other heading every half cell spacing) nearest to the pointer's shadow on the line (no wall before the pointer has gone half way to the first stop), shortened until every cell the wall
+crosses is on the island. What it previews and builds is **one straight wall**, not cells: `town.walls` holds `{x, z, deg, len, w, c}` (section 0a); the ghost is one
 translucent prism the shape of the wall (`CSBuild.wall_poly`), re-made at every pointer move (shorter when the pointer comes back, another heading
 when it goes round); the status line says "Straight wall at N deg, M m long. Release to build it, Esc or the right button to cancel". Nothing is built while
 the button is down; the release adds the wall (`add_wall`) as ONE undo step; Esc, the right button, a change of build type or of mode, or the window
 losing focus cancels. A press moved less than 6 px is a click and builds one block, in either mode. A right-click on a wall (the collision mesh gives it
 its own owner id, `CSBuild.WALL_OWNER + i`, `pick().wall`) takes it away, one undo step; a click on a wall's face builds on the cell beside it.
 
-*What a wall is* (`CSBuild._walls`): a footing and a body of its own, one level high, a rectangle `WALL_THICK` = 1.9 m wide from the middle of its cell to
-the middle of the cell it ends on, whatever cells it crosses (no rule of the cells applies to it: no door, no arch, no corbel under it, the prop
+*What a wall is* (`CSBuild._walls`): a footing and a body of its own, one level high, a rectangle `w` wide (`WALL_THICK` = 1.9 m x cell, 1.34 m at the default cell size; thicker once walls merged) from where it starts to where it ends, whatever cells it crosses (no rule of the cells applies to it: no door, no arch, no corbel under it, the prop
 layer keeps clear of it as of a block). The parapet is made for all the walls together, along the boundary of the walls' union
 (`_wall_loops`: every rectangle's edges cut where the others cross them, the pieces inside another rectangle dropped, collinear overlaps kept once,
 the rest chained into loops), so where walls meet or cross the parapet goes round the joint and not across the walk, a ring of walls has an inner
@@ -459,6 +513,23 @@ the pointer comes back and swings to another heading when it goes round; nothing
 wall as ONE undo step; its built mesh is straight (every vertex on four parallel lines within 1.2 cm, 1.9 m thick, as long as the preview said);
 a click on it picks it, a right-click takes it away (one undo step), Ctrl+Z / Ctrl+Y; Esc and the right button cancel (and the release after builds
 nothing); a plain click builds one block; with the mode off the drag is the ordinary paint preview again.
+
+**Round 3's tests (2026-10-19).** `tests/verify_cs_core.gd` gained: `_merging()` (Kevin's exact castle_004 list loaded as a round-2 save: 30 walls merge into at most 20,
+the merged ones are thicker than a single wall, no two parallel walls are left closer than the merge threshold, the merged castle builds closed, walls at
+different angles stay separate; two strips side by side merge into one twice as thick, one half a thickness further joins, ten metres apart / end to end far apart /
+crossing do not; three strips make a wall three times as thick, built closed, and it round-trips a save as one wall), `_corners()` (a lone wall has a round 16-sided
+tower on each end that covers the whole squared end and stands above the wall; bends of 30, 60, 90, 120, 150, 210, 270 and 330 degrees have three towers and a
+wedge fill exactly when under 75 degrees, the fill a proper convex triangle; a T has three towers (the stem's end is buried), a cross four, a ring of three three; a
+merged thick wall ends flat; every one built closed), `_directions()` (snapping for 12, 16 and 24 directions, the grid's lines against 22.5 and 15 degrees,
+`wall_stops`, the saved count and an unknown count loading as 12, one wall in each direction of each count merged and built closed, a wall at 22.5 degrees a
+straight rectangle, the castle with walls at 22.5 and 105 degrees beside it) and `_cell_sizes()` (1/1, 1/2, 1/3, 1/4: every cell regular with the right area and
+the island as big; the tag and the saved size; the default; the castle starter, four random castles and two walls closed on 12-sided 1/2 and 1/3 and hexagons 1/2).
+The "wall is straight" check ignores the vertices of the two end towers. `tests/verify_cs_editor.gd` gained: the Directions button and R (12 -> 16 -> 24 -> 12, saved,
+undo leaves it alone), a drag at 16 directions snapping to 22.5 degrees and ending a whole number of half cell spacings along it, built closed; walls merging through
+`add_wall` (a second wall half a thickness beside the first: one wall 1.5 thick and the union long, Ctrl+Z splits them); the Cells switch through 12-sided 1/2 (default),
+1/3, the full size, hexagons 1/2, and Shift+H back. New tools: `tools/corner_probe.gd`, `tools/corner_gallery.gd`, `tools/wall_one.gd` (one town of walls from the command
+line, with `--at=x,z` listing the plan layers there), `tools/merge_probe.gd`, `tools/save_castle004.gd`, `tools/grid_dump.gd`, `tools/mini_town.gd`, `tools/time_probe.gd`;
+`tools/wall_probe.gd` and `hex_probe.gd` take `--cell=` and `--dirs=`.
 
 Tools: `tools/grid_probe.gd` (cell shapes of the double grid, `--svg=` writes the plan `shots/hex_grid_plan.svg`), `tools/hex_probe.gd` (the stress test: click-built
 castles and the board-edge rings audited; `--grid=hex` on the hexagon grid), `tools/wall_probe.gd` (random straight walls over random castles), `tools/wall_shapes.gd`

@@ -8,7 +8,7 @@ func _initialize() -> void:
 		if a.begins_with("--"):
 			opt[a.substr(2).get_slice("=", 0)] = a.get_slice("=", 1) if "=" in a else "1"
 	var grid := CSGrid.new()
-	grid.generate(1, CSGrid.RINGS, str(opt.get("grid", "dodeca")))
+	grid.generate(1, 0, str(opt.get("grid", "dodeca")), CSGrid.parse_div(str(opt.get("cell", "1"))))
 	var town := CSTown.new()
 	CSStarter.make(str(opt.get("starter", "castle")), grid, town)
 	var b := CSBuild.new()

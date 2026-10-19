@@ -73,8 +73,8 @@ static func _nearest_angle(grid: CSGrid, cells: Array, c: Vector2, ang: float) -
 static func _castle(grid: CSGrid, town: CSTown) -> void:
 	var cv := _centre(grid)
 	var c := grid.verts[cv]
-	# the hex grid's points are 5 m apart: a 4.5 m band can leave a gap the sea floods through
-	var ring := _band(grid, c, 14.5, 20.5)
+	# the curtain: a band one cell thick and a bit more (a band of less can leave a gap the sea floods through), the same radius whatever the cells
+	var ring := _band(grid, c, 17.5 - 0.58 * grid.spacing, 17.5 + 0.58 * grid.spacing)
 	for v: int in ring:
 		town.add(v, 0, 0)
 		town.add(v, 1, 1 if CSBuild.h01(v, 1) < 0.5 else 0)
@@ -109,10 +109,19 @@ static func _castle(grid: CSGrid, town: CSTown) -> void:
 	# the keep: a block of cells three high with a round tower rising from its middle
 	var keep := [cv]
 	var knb: PackedInt32Array = grid.nbrs[cv]
-	var arm := 2 if grid.kind == CSGrid.KIND_HEX else 6
-	for i in knb.size():
-		if i % arm == 0:                 # every other neighbour of the hexagon grid (three arms), two opposite big ones of the 12-sided (they alternate with the small): or the keep fills the courtyard
-			keep.append(knb[i])
+	# two opposite building neighbours (east and west) make a bar of three cells; the keep must not fill the courtyard
+	for ang in [0.0, PI]:
+		var arm := -1
+		var bd := INF
+		for u in knb:
+			if not grid.is_dodecagon(u):
+				continue
+			var d := absf(angle_difference((grid.verts[u] - c).angle(), ang))
+			if d < bd:
+				bd = d
+				arm = u
+		if arm >= 0:
+			keep.append(arm)
 	for v: int in keep:
 		for k in 3:
 			town.add(v, k, 10 if v != cv else 1)
@@ -125,7 +134,7 @@ static func _castle(grid: CSGrid, town: CSTown) -> void:
 	for v: int in court:
 		if Array(grid.nbrs[v]).any(func(u: int) -> bool: return town.has(u, 0)):
 			continue                     # six neighbours make touching likely; a cottage stands alone
-		if rng.randf() < 0.85:
+		if rng.randf() < 0.85 / float(grid.div):
 			town.add(v, 0, [2, 3, 5, 9, 7][rng.randi_range(0, 4)])
 
 

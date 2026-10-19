@@ -211,6 +211,15 @@ func _key(code: int, ctrl: bool) -> void:
 	await process_frame
 
 
+func _key_shift(code: int) -> void:
+	var e := InputEventKey.new()
+	e.keycode = code
+	e.shift_pressed = true
+	e.pressed = true
+	root.push_input(e)
+	await process_frame
+
+
 func _hold(code: Key, frames: int) -> void:
 	## A key held down for some frames, through Input (the state W / A / S / D polling reads).
 	var e := InputEventKey.new()
@@ -431,7 +440,7 @@ func _run() -> void:
 		await _button(MOUSE_BUTTON_LEFT, true, p0)
 		await _move_along(MOUSE_BUTTON_LEFT, _path([p0, p1]))
 		var wl: Dictionary = main.stroke_wall
-		ok(main.stroke_active and wl.has("len") and int(wl.v) == v0 and int(wl.deg) == int(swp.deg) and absf(float(wl.len) - float(swp.len)) < 0.01,
+		ok(main.stroke_active and wl.has("len") and absf(float(wl.x) - a0.x) < 0.01 and int(wl.deg) == int(swp.deg) and absf(float(wl.len) - float(swp.len)) < 0.01,
 			"a straight drag previews one wall from the cell pressed on, snapped to %d degrees although the pointer is a few degrees off it, %.2f m long (%s)" % [int(swp.deg), float(swp.len), str(wl)])
 		ok(posmod(main.stroke_deg, 360) == int(swp.deg) and (main.stroke_mi as MeshInstance3D).visible and (main.stroke_mi.mesh as ArrayMesh).get_surface_count() == 1,
 			"the ghost is one prism, not a row of cells")
@@ -458,7 +467,7 @@ func _run() -> void:
 		await _button(MOUSE_BUTTON_LEFT, false, p1)
 		await _settle()
 		ok(not main.stroke_active and not (main.stroke_mi as MeshInstance3D).visible, "the release ends the stroke and hides the preview")
-		ok(town.walls.size() == 1 and int(town.walls[0].v) == v0 and int(town.walls[0].deg) == int(swp.deg) and absf(float(town.walls[0].len) - float(swp.len)) < 0.01 and town.size() == n3,
+		ok(town.walls.size() == 1 and absf(float(town.walls[0].x) - a0.x) < 0.01 and absf(float(town.walls[0].z) - a0.y) < 0.01 and int(town.walls[0].deg) == int(swp.deg) and absf(float(town.walls[0].len) - float(swp.len)) < 0.01 and town.size() == n3,
 			"the release builds exactly the previewed wall, and no block")
 		ok(main.history.size() == hist3 + 1, "the whole wall is one undo step (%d new)" % (main.history.size() - hist3))
 		# straight: every point of the wall's mesh lies on one of four parallel lines (its two faces and the parapet's two inner faces), from its start to its end
@@ -472,6 +481,7 @@ func _run() -> void:
 		var wall_verts := 0
 		var half := CSBuild.WALL_THICK * 0.5
 		var offs := [-half, -(half - CSBuild.PT), half - CSBuild.PT, half]
+		var tower_r := float((CSWallJoints.compute(town.walls, CSWalls.thickness(grid)).towers[0] as Dictionary).r)
 		for tri in wm.verts.size() / 3:
 			if int(wm.cust1[tri * 12 + 3]) != owner:
 				continue
@@ -480,9 +490,11 @@ func _run() -> void:
 				var r := Vector2(q.x, q.z) - a0
 				var perp := r.cross(dir0)
 				var al := r.dot(dir0)
-				wall_verts += 1
 				along_lo = minf(along_lo, al)
 				along_hi = maxf(along_hi, al)
+				if al < tower_r + 0.02 or al > float(swp.len) - tower_r - 0.02:
+					continue                        # (the round towers on the two ends)
+				wall_verts += 1
 				perp_lo = minf(perp_lo, perp)
 				perp_hi = maxf(perp_hi, perp)
 				var near_line := false
@@ -494,8 +506,8 @@ func _run() -> void:
 				if not near_line and not ((al < CSBuild.PT + 0.012 or al > float(swp.len) - CSBuild.PT - 0.012) and absf(perp) < half + 0.012):
 					lines_ok = false
 		ok(wall_verts > 100 and lines_ok, "straight: every point of the built wall lies on one of its four parallel lines, within 1.2 cm (%d vertices)" % wall_verts)
-		ok(absf(perp_lo + half) < 0.012 and absf(perp_hi - half) < 0.012 and absf(along_lo) < 0.012 and absf(along_hi - float(swp.len)) < 0.012,
-			"and it is %.2f m thick and %.2f m long (%.3f .. %.3f across, %.3f .. %.3f along)" % [CSBuild.WALL_THICK, float(swp.len), perp_lo, perp_hi, along_lo, along_hi])
+		ok(absf(perp_lo + half) < 0.012 and absf(perp_hi - half) < 0.012 and along_lo > -tower_r - 0.02 and along_lo < -half and along_hi < float(swp.len) + tower_r + 0.02 and along_hi > float(swp.len) + half,
+			"and it is %.2f m thick, %.2f m long between its two end towers (%.3f .. %.3f across, %.3f .. %.3f along with the towers)" % [CSBuild.WALL_THICK, float(swp.len), perp_lo, perp_hi, along_lo, along_hi])
 		# a right-click on the wall takes it away (one undo step), and Ctrl+Z puts it back
 		var wp := Vector3(a0.x + dir0.x * float(swp.len) * 0.5, CSBuild.level_y_static(0) + 2.0, a0.y + dir0.y * float(swp.len) * 0.5)
 		var pick_w: Dictionary = main.pick(_screen(wp))
@@ -538,6 +550,74 @@ func _run() -> void:
 		await _key(KEY_Z, true)
 		await _settle()
 		ok(town.size() == n3, "and Ctrl+Z takes it back")
+	# DIRECTIONS: the Directions button and R go 12 -> 16 -> 24 -> 12; the count is saved with the castle; the preview snaps to it (a 22.5 degree wall with 16)
+	var db: Button = main.ui.b_dirs
+	ok(db != null and db.is_visible_in_tree() and town.wall_dirs == 12 and db.text.contains("12"), "a Directions button shows the 12 directions of a wall, the default (%s)" % db.text)
+	await _key(KEY_R, false)
+	ok(town.wall_dirs == 16 and db.text.contains("16") and main.status_msg.contains("16"), "R turns it to 16 directions, on the button and in the cue (%s / %s)" % [db.text, main.status_msg])
+	if not swp.is_empty():
+		var a1: Vector2 = grid.verts[swp.v0]
+		var deg16 := -1.0
+		var d16 := Vector2.ZERO
+		var e16 := Vector2.ZERO
+		var q16 := Vector2.ZERO
+		for k in 16:
+			var cand := 22.5 * float(k)
+			if absf(fposmod(cand, 30.0)) < 0.01 or absf(fposmod(cand, 30.0) - 30.0) < 0.01:
+				continue                         # only the headings that are not on a grid line
+			var dd := Vector2.from_angle(deg_to_rad(cand))
+			var ee := a1 + dd * 11.0
+			var qq := _screen(Vector3(ee.x, 0.0, ee.y))
+			if not _safe(qq) or (main.cam as Camera3D).is_position_behind(Vector3(ee.x, 0.0, ee.y)) or (swp.p0 as Vector2).distance_to(qq) < 60.0:
+				continue
+			var free16 := true
+			for c: int in grid.cells_along(a1, ee, false):
+				if not grid.is_whole(c) or town.top(c) >= 0 or town.has_wild(c) or (grid.is_dodecagon(c) and not grid.buildable(c)):
+					free16 = false
+			if free16:
+				deg16 = cand
+				d16 = dd
+				e16 = ee
+				q16 = qq
+				break
+		if deg16 >= 0.0:
+			await _button(MOUSE_BUTTON_LEFT, true, swp.p0)
+			await _move_along(MOUSE_BUTTON_LEFT, _path([swp.p0, q16]))
+			var w16: Dictionary = main.stroke_wall
+			ok(w16.has("len") and absf(float(w16.deg) - deg16) < 0.01 and main.status_msg.contains(main.deg_text(deg16)) and main.status_msg.contains("16 directions"),
+				"with 16 directions the drag snaps to %.1f degrees, off the grid's lines (%s)" % [deg16, main.status_msg])
+			var units := float(w16.get("len", 0.0)) / (grid.spacing * 0.5)
+			ok(absf(units - roundf(units)) < 0.01, "and ends a whole number of half cell spacings along it (%.2f m)" % float(w16.get("len", 0.0)))
+			await _button(MOUSE_BUTTON_LEFT, false, q16)
+			await _settle()
+			ok(town.walls.size() == 1 and absf(float(town.walls[0].deg) - deg16) < 0.01, "and the release builds that wall")
+			var bad_wall := CFAudit.check(main.build.mesh, [CFMesh.Z_CLOTH_A, CFMesh.Z_CLOTH_B])
+			ok(int(bad_wall.open_other) + int(bad_wall.non_manifold) + int(bad_wall.flipped) + int(bad_wall.t_junctions) == 0, "a wall off the grid's lines builds closed")
+			await _key(KEY_Z, true)
+			await _settle()
+			ok(town.walls.is_empty() and town.wall_dirs == 16, "undo takes the wall back and leaves the direction count alone")
+		else:
+			print("  (no 22.5 degree stretch in view: the 16 direction drag is left to the core suite)")
+	await _key(KEY_R, false)
+	ok(town.wall_dirs == 24 and db.text.contains("24"), "R again: 24 directions (%s)" % db.text)
+	var saved_dirs := CSTown.new()
+	saved_dirs.from_dict(town.to_dict())
+	ok(saved_dirs.wall_dirs == 24, "the count is saved with the castle")
+	await _click(db.get_global_rect().get_center())
+	ok(town.wall_dirs == 12 and db.text.contains("12"), "the button goes on round to 12 again (%s)" % db.text)
+	# MERGING: a wall laid over another along the same line, and one right beside it, become one (thicker) wall; Ctrl+Z splits them again
+	var base_w := CSWalls.thickness(grid)
+	var m0 := Vector2(-18.0, -30.0)
+	ok(main.add_wall({"x": m0.x, "z": m0.y, "deg": 0.0, "len": 8.0, "w": base_w, "c": 1}) and town.walls.size() == 1, "a wall laid")
+	ok(main.add_wall({"x": m0.x + 3.0, "z": m0.y + base_w * 0.5, "deg": 0.0, "len": 9.0, "w": base_w, "c": 1}) and town.walls.size() == 1,
+		"a second laid half a thickness beside and overlapping it merges with it (%d wall)" % town.walls.size())
+	ok(absf(float(town.walls[0].w) - 1.5 * base_w) < 1e-3 and absf(float(town.walls[0].len) - 12.0) < 1e-3, "one wall %.2f m thick and %.1f m long (the union)" % [float(town.walls[0].w), float(town.walls[0].len)])
+	await _key(KEY_Z, true)
+	await _settle()
+	ok(town.walls.size() == 1 and absf(float(town.walls[0].w) - base_w) < 1e-3 and absf(float(town.walls[0].len) - 8.0) < 1e-3, "Ctrl+Z takes the second wall back: the first is as it was")
+	await _key(KEY_Z, true)
+	await _settle()
+	ok(town.walls.is_empty(), "and the first")
 	# off again: the hex-style drag follows the pointer cell by cell as before
 	await _click(sb.get_global_rect().get_center())
 	ok(not main.straight_mode and not sb.button_pressed, "the button turns straight walls off again")
@@ -811,24 +891,37 @@ func _run() -> void:
 	ctrl_e.pressed = false
 	Input.parse_input_event(ctrl_e)
 	ok((main.cam_goal as Vector3).distance_to(g4) < 0.01, "with Ctrl held (Ctrl+S saves) W does not move the view")
-	# the Cells switch: H (or the Cells button) asks, a second press within five seconds switches to the plain hexagon grid (a new empty sea) and back
+	# the Cells switch: H (or the Cells button) asks, a second press within five seconds goes to the next grid of CSGrid.variants() (a new empty sea):
+	# the game starts on 12-sided cells at 1/2 of the area, then 1/3, the full size, hexagons at 1/2 ...; Shift+H goes back
 	await _settle()
 	var cb: Button = main.ui.b_cells
-	ok(cb != null and cb.is_visible_in_tree() and main.grid.kind == CSGrid.KIND_DODECA and cb.text.contains("12"), "a Cells button shows the 12-sided cells (%s)" % cb.text)
+	ok(cb != null and cb.is_visible_in_tree() and main.grid.kind == CSGrid.KIND_DODECA and main.grid.div == CSGrid.DEFAULT_DIV and cb.text.contains("12") and cb.text.contains("1/2"),
+		"a Cells button shows the 12-sided cells at half the area, the default (%s)" % cb.text)
+	ok(absf(main.grid.side - 0.98) < 0.01 and absf(CSWalls.thickness(main.grid) - CSBuild.WALL_THICK) < 1e-6, "the smaller cells: side %.2f m, a wall %.2f m thick" % [main.grid.side, CSBuild.WALL_THICK])
 	var blocks_before := town.size()
 	await _key(KEY_H, false)
-	ok(main.grid.kind == CSGrid.KIND_DODECA and town.size() == blocks_before, "the first press of H only asks")
+	ok(main.grid.kind == CSGrid.KIND_DODECA and main.grid.div == CSGrid.DEFAULT_DIV and town.size() == blocks_before, "the first press of H only asks")
 	await _key(KEY_H, false)
 	await _settle()
-	ok(main.grid.kind == CSGrid.KIND_HEX and main.town.grid_kind == CSGrid.KIND_HEX and main.town.size() == 0 and cb.text.contains("6"), "the second press switches to the hexagon grid and starts an empty sea (%s)" % cb.text)
+	ok(main.grid.kind == CSGrid.KIND_DODECA and main.grid.div == 3 and main.town.grid_div == 3 and main.town.size() == 0 and cb.text.contains("1/3"), "the second press goes to the 12-sided cells at 1/3 of the area, an empty sea (%s)" % cb.text)
+	var dv: int = main.grid.nearest(Vector2.ZERO)
+	await _click(_screen(Vector3(main.grid.verts[dv].x, 0.0, main.grid.verts[dv].y)))
+	await _settle()
+	ok(main.town.has(dv, 0) and (main.grid.nbrs[dv] as PackedInt32Array).size() == 12, "a click builds a block on a 12-sided cell of the smaller size")
+	for _i in 2:                       # on to the full size, then the hexagons at 1/2
+		await _key(KEY_H, false)
+		await _key(KEY_H, false)
+		await _settle()
+	ok(main.grid.kind == CSGrid.KIND_HEX and main.town.grid_kind == CSGrid.KIND_HEX and main.grid.div == 2 and main.town.size() == 0 and cb.text.contains("6"), "two more switches reach the hexagon grid at 1/2 of the area (%s)" % cb.text)
 	var hv: int = main.grid.nearest(Vector2.ZERO)
 	await _click(_screen(Vector3(main.grid.verts[hv].x, 0.0, main.grid.verts[hv].y)))
 	await _settle()
 	ok(main.town.has(hv, 0) and (main.grid.nbrs[hv] as PackedInt32Array).size() == 6, "a click builds a block on a hexagon")
-	await _click(cb.get_global_rect().get_center())
-	await _click(cb.get_global_rect().get_center())
-	await _settle()
-	ok(main.grid.kind == CSGrid.KIND_DODECA and main.town.grid_kind == CSGrid.KIND_DODECA and main.town.size() == 0, "the Cells button switches back to the 12-sided cells")
+	for _i in 3:                       # Shift+H back: the full size, 1/3, then the default
+		await _key_shift(KEY_H)
+		await _key_shift(KEY_H)
+		await _settle()
+	ok(main.grid.kind == CSGrid.KIND_DODECA and main.town.grid_kind == CSGrid.KIND_DODECA and main.grid.div == CSGrid.DEFAULT_DIV and main.town.size() == 0, "Shift+H goes back to the 12-sided cells at 1/2 of the area")
 	_end()
 
 

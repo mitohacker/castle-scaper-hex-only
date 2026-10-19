@@ -11,7 +11,7 @@ func _initialize() -> void:
 		if a.begins_with("--"):
 			opt[a.substr(2).get_slice("=", 0)] = a.get_slice("=", 1) if "=" in a else "1"
 	var g := CSGrid.new()
-	g.generate(int(opt.get("seed", 1)), CSGrid.RINGS, str(opt.get("grid", "dodeca")))
+	g.generate(int(opt.get("seed", 1)), 0, str(opt.get("grid", "dodeca")), CSGrid.parse_div(str(opt.get("cell", "1"))))
 	var b := CSBuild.new()
 	b.grid = g
 	var by_n := {}

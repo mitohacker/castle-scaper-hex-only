@@ -23,7 +23,7 @@ func _initialize() -> void:
 	var stairs := 0
 	for gs in 1:
 		var grid := CSGrid.new()
-		grid.generate(1, CSGrid.RINGS, str(opt.get("grid", "dodeca")))
+		grid.generate(1, 0, str(opt.get("grid", "dodeca")), CSGrid.parse_div(str(opt.get("cell", "1"))))
 		for style in styles:
 			for s in range(first, first + towns):
 				var t := CSTown.new()

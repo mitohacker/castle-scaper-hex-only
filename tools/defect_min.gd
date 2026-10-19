@@ -9,12 +9,12 @@ func _initialize() -> void:
 		if a.begins_with("--"):
 			opt[a.substr(2).get_slice("=", 0)] = a.get_slice("=", 1) if "=" in a else "1"
 	var grid := CSGrid.new()
-	grid.generate(int(opt.get("grid", 1)))
+	grid.generate(1, 0, str(opt.get("grid", "dodeca")), CSGrid.parse_div(str(opt.get("cell", "1"))))
 	var t := CSTown.new()
 	if opt.has("starter"):
 		CSStarter.make(str(opt.starter), grid, t)
 	else:
-		CSStarter.random_growth(grid, t, int(opt.get("town", 0)), 70, int(opt.get("style", 0)))
+		CSStarter.random_growth(grid, t, int(opt.get("town", 0)), int(opt.get("clicks", 70)), int(opt.get("style", 0)))
 	var keys: Array = t.blocks.keys()
 	keys.sort()
 	var r := _audit(grid, keys, t)
