@@ -29,8 +29,9 @@ const LAYER2_ID := "layer-2"
 const KIND_LAYER3 := "layer3"        # three lattices layered, turned 0, 20 and 40 degrees
 const LAYER3_ID := "layer3-2"
 const BASE_AREA := 12.5 * 1.7320508075688772   # 21.65 m2: the area of a cell at div 1 (the hexagon of side 5 / sqrt 3, the dodecagon of side SIDE)
-const DEFAULT_DIV := 2               # the cell size a new town starts with: half the area of the first version's cells
-const DIVS := [1, 2, 3, 4]           # the cell sizes: 1 / div of the area (div 1: 21.65 m2, 2: 10.8 m2, 3: 7.2 m2, 4: 5.4 m2)
+const DEFAULT_DIV := 4               # the cell size a new town starts with: a quarter of the area of the first version's cells (5.4 m2, side 0.70 m)
+const DIVS := [1, 2, 4, 6, 8]        # the cell sizes the game offers: 1 / div of the area (div 1: 21.65 m2, 2: 10.8, 4: 5.4, 6: 3.6, 8: 2.7 m2)
+const MAX_DIV := 8                   # (the largest a save or --cs-cell may name; 1/6 and 1/8 are the experimental steps: see SPEC 0b)
 
 var kind := KIND_DODECA             # which cells: KIND_DODECA or KIND_HEX
 var div := 1                        # the cell size: 1 / div of the area of the full-size cell (the island stays as big, it has more cells)
@@ -49,9 +50,10 @@ var nbrs: Array = []                # per point: PackedInt32Array of neighbours,
 var rings: Array = []               # per point: PackedInt32Array, face i lies between nbrs[i] and nbrs[i+1] (-1: outside)
 var cells: Array = []               # per point: its cell polygon (the corners of its faces, counter-clockwise)
 var _mid := {}                      # edge key -> midpoint
-var _hash := {}                     # Vector2i (cells of HASH metres) -> [point ids]
+var _hash := {}                     # Vector2i (cells of _hs metres) -> [point ids]
+var _hs := HASH                     # the size of a hash cell: 1.16 cell spacings (so a lookup tests as many points at 1/8 cells as at the full size)
 
-const HASH := 6.0
+const HASH := 6.0                    # (the hash cell of the full-size grid and of the layered ones)
 
 
 func edge_key(a: int, b: int) -> int:
@@ -93,20 +95,21 @@ static func kind_of(id: String) -> String:
 static func div_of(id: String) -> int:
 	## The cell size a tag names (1 for the tags without one).
 	if "/" in id:
-		return clampi(int(id.get_slice("/", 1)), 1, 16)
+		return clampi(int(id.get_slice("/", 1)), 1, MAX_DIV)
 	return 1
 
 
 static func parse_div(text: String) -> int:
 	## "2" or "1/2": the cell size as 1 / div of the area.
 	var parts := text.split("/")
-	return clampi(int(parts[parts.size() - 1]), 1, 16)
+	return clampi(int(parts[parts.size() - 1]), 1, MAX_DIV)
 
 
 static func variants() -> Array:
-	## The grids the game offers, in the order the Cells button goes through them: [kind, div]. The first is the default (12-sided cells at half the
-	## area); the layered lattices (KIND_LAYER, KIND_LAYER3) are experiments, reachable with --cs-grid=layer only: their cells are irregular.
-	return [[KIND_DODECA, DEFAULT_DIV], [KIND_DODECA, 3], [KIND_DODECA, 1], [KIND_HEX, 2], [KIND_HEX, 3], [KIND_HEX, 1]]
+	## The grids the game offers, in the order the Cells button goes through them: [kind, div]. The first is the default (12-sided cells at a quarter of the
+	## area), then the two smaller steps (1/6 and 1/8: they build, with a few defects on the stress towns), then the larger ones; the layered lattices
+	## (KIND_LAYER, KIND_LAYER3) are experiments, reachable with --cs-grid=layer only: their cells are irregular.
+	return [[KIND_DODECA, DEFAULT_DIV], [KIND_DODECA, 6], [KIND_DODECA, 8], [KIND_DODECA, 2], [KIND_DODECA, 1], [KIND_HEX, 4], [KIND_HEX, 2], [KIND_HEX, 1]]
 
 
 static func variant_name(k: String, d: int) -> String:
@@ -314,6 +317,8 @@ static func _circumcentre(a: Vector2, b: Vector2, c: Vector2) -> Vector2:
 
 
 func _build_topology() -> void:
+	_hs = HASH if (kind == KIND_LAYER or kind == KIND_LAYER3) else spacing * 1.16
+	_hash.clear()
 	var nv := verts.size()
 	var nq := tris.size() / 3
 	centers.resize(nq)
@@ -372,7 +377,7 @@ func _build_topology() -> void:
 			if q >= 0:
 				poly.append(centers[q])
 		cells[v] = poly
-		var hk := Vector2i(floori(verts[v].x / HASH), floori(verts[v].y / HASH))
+		var hk := Vector2i(floori(verts[v].x / _hs), floori(verts[v].y / _hs))
 		if not _hash.has(hk):
 			_hash[hk] = []
 		(_hash[hk] as Array).append(v)
@@ -393,7 +398,7 @@ func buildable(v: int) -> bool:
 func nearest(p: Vector2, only_buildable: bool = true) -> int:
 	## The point whose cell contains p (a dodecagon is far wider than a triangle, so the nearest centre is not the cell p is in). A p over a
 	## cell that is not buildable (the sea ring) gives the nearest buildable point instead; one outside every cell, the nearest point.
-	var hk := Vector2i(floori(p.x / HASH), floori(p.y / HASH))
+	var hk := Vector2i(floori(p.x / _hs), floori(p.y / _hs))
 	var best := -1
 	var bd := INF
 	for dx in range(-1, 2):
@@ -408,6 +413,19 @@ func nearest(p: Vector2, only_buildable: bool = true) -> int:
 					bd = d
 					best = v
 	return best
+
+
+func points_in_rect(lo: Vector2, hi: Vector2) -> PackedInt32Array:
+	## The points (cells' middles) inside the rectangle lo..hi, in the order of their ids.
+	var out := PackedInt32Array()
+	for cx in range(floori(lo.x / _hs), floori(hi.x / _hs) + 1):
+		for cz in range(floori(lo.y / _hs), floori(hi.y / _hs) + 1):
+			for v: int in _hash.get(Vector2i(cx, cz), []):
+				var p := verts[v]
+				if p.x >= lo.x and p.x <= hi.x and p.y >= lo.y and p.y <= hi.y:
+					out.append(v)
+	out.sort()
+	return out
 
 
 func _in_cell(v: int, p: Vector2) -> bool:
@@ -458,11 +476,11 @@ func cells_along(a: Vector2, b: Vector2, only_buildable: bool = true) -> PackedI
 	## The points whose cells the segment a-b passes through or runs along (a cell it only grazes within 2 cm counts), in the order it meets
 	## them. Along the line through the middles of a row of dodecagons that is the row; along one of the 30 degree lines it goes through
 	## dodecagon, triangle, then runs along the shared side of two dodecagons (both count) and on through the next triangle.
-	var lo := a.min(b) - Vector2(HASH, HASH)
-	var hi := a.max(b) + Vector2(HASH, HASH)
+	var lo := a.min(b) - Vector2(_hs, _hs)
+	var hi := a.max(b) + Vector2(_hs, _hs)
 	var found: Array = []
-	for cx in range(floori(lo.x / HASH), floori(hi.x / HASH) + 1):
-		for cz in range(floori(lo.y / HASH), floori(hi.y / HASH) + 1):
+	for cx in range(floori(lo.x / _hs), floori(hi.x / _hs) + 1):
+		for cz in range(floori(lo.y / _hs), floori(hi.y / _hs) + 1):
 			for v: int in _hash.get(Vector2i(cx, cz), []):
 				if only_buildable and not buildable(v):
 					continue

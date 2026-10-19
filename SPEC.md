@@ -19,6 +19,83 @@ replaced by click-to-stack, its castle rules by block rules, its stone paint by 
 itself is untouched. Townscaper was studied with REA + Ghidra (`C:\Dev\Prototypes\townscaper-re`, local only); its
 ideas were re-implemented, no code or assets were copied.
 
+## 0b. Round 4 (2026-10-19): a quarter-area default cell, a ladder of sizes, walls that merge by cell width
+
+Kevin tested round 3's build (a93f577) and wrote: "I want smaller grids.... new straight walls still need to merge". Two things were done.
+
+**1. Smaller cells: the default is now 1/4 of the first area, with a ladder 1, 1/2, 1/4, 1/6, 1/8.** `CSGrid.DIVS = [1, 2, 4, 6, 8]`, `DEFAULT_DIV = 4`, `MAX_DIV = 8`
+(`--cs-cell=N` takes 1..8; a save names its size in the grid tag, "dodeca-2/4"; older saves open as they were). The Cells button / H goes through
+12-sided 1/4 (default), 1/6, 1/8, 1/2, 1/1, then the hexagons 1/4, 1/2, 1/1 (Shift+H the other way). The default cell is a dodecagon of 5.4 m2 (4681 cells on
+the same island; 2.6 m across the flats, side 0.695 m). Measured on this build machine (4 vCPU, software only: **no GPU, so no frame time**; the CPU
+numbers and the amount of geometry are what there is), starter castle plus one click on the open sea, CPU in ms (`tools/cost_probe.gd`):
+
+| cell | cells | side | grid | a hover (`nearest`) | starter blocks | full build | **one click** (rules + plan) | props | + upload | castle tris | grid overlay tris |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1/1 | 1141 | 1.39 m | 109 | 37 us | 74 | 1.6 s | 237 (39 + 246) | 271 | 28 | 31 k | 14 k |
+| 1/2 | 2269 | 0.98 m | 214 | 42 us | 125 | 2.8 s | 451 (61 + 378) | 383 | 55 | 52 k | 27 k |
+| **1/4** | 4681 | 0.70 m | 440 | 42 us | 151 | 4.0 s | **618 (99 + 532)** | 523 | 84 | 67 k | 56 k |
+| 1/6 | 7057 | 0.57 m | 701 | 42 us | 176 | 4.5 s | 710 (113 + 558) | 614 | 88 | 76 k | 85 k |
+| 1/8 | 9577 | 0.49 m | 953 | 43 us | 176 | 4.5 s | 868 (135 + 664) | 611 | 104 | 76 k | 115 k |
+
+A click's whole job on the worker thread is the incremental build + the props + the mesh and collision upload: about 0.54 s at 1/1, 0.89 s at 1/2, **1.2 s at 1/4**,
+1.4 s at 1/6, 1.6 s at 1/8 on this machine (the editor stays responsive meanwhile: the build runs on `WorkerThreadPool`, the old castle is drawn until the new one is
+ready). Before the cost work below, the same click was 2.2 s at 1/4 (build 0.78 s, props 1.4 s, upload 0.08 s; `nearest` 162 us). What was costing:
+`CSGrid.nearest` and `cells_along` hashed points into cells of a fixed 6 m, so a lookup tested 4x more points at 1/4 (162 us; now the hash cell is 1.16 cell spacings
+and a hover costs 42 us at every size, `_hs`); `CSBuild._find_land` flooded the sea over the whole island at every click (97 ms at 1/4; now only a box of the town
+grown by two cell spacings, `CSGrid.points_in_rect`; the core suite checks it finds the same land as the whole-island flood, `tools/land_check.gd`); `CSProps._bunting`
+cast a ray of `grid.nearest` calls from every side of every block (1062 ms at 1/4: a small cell has more sides but not more flags, so the share of sides that try is
+`1 - 0.4 x cell` and the ray step grows as the cell shrinks; now 207 ms) and `_sides` is memoised. Left: the plan's own fixed cost per click (it walks all 2679 layers
+of the starter castle and reuses 2673 of them: register 61, pairs 39, split 85, sub 48, classify 29, walls 35, ledges 139 ms at 1/4; `tools/plan_profile.gd`), the props'
+`_solve` (214 ms) and `_bunting` (207 ms). Not measured (no GPU): the frame time. What there is to draw grows from 67 k castle triangles (1/4) against 52 k (1/2); the
+always-visible grid overlay (one fan per cell side, faded out away from the pointer) from 27 k to 56 k triangles at 1/4 and 115 k at 1/8, one alpha-blended
+unshaded mesh, and the prop instances 1331 -> 1571 at 1/4: that is a modest load for a real GPU, but it is the first thing to look at if a frame is slow.
+
+*Defects at each size* (`tools/cell_stress.gd`: the 14 starters + 16 random click-built 70-click towns, half with a random style per click; defects = open edges + non-manifold
++ flipped + T-junctions of the audit; hexagons likewise): **1/1 (the core suite) and 1/2 (22 towns): none; 1/4 (the default): 0 in all 30 towns; hexagons 1/4 and 1/2: 0 in 30; 1/6: 3 towns of 30
+(the castle and kingdom starters 9 open edges each, one random castle 12); 1/8: 20 towns of 30, 7169 defects (the castle starter's courtyard ground is open, `shots/cells_ladder.jpg`,
+bottom row, shows the white floor)**. The practical minimum is therefore **1/4** (the default): below it blocks still build and can be played, but the skin has small cracks in
+a tenth (1/6) to two thirds (1/8) of the towns and the doors are 0.34 / 0.30 m wide; 1/6 and 1/8 stay in the ladder as experimental steps (not chased: SPEC section 10 lists them).
+What made 1/4 clean (they had 6 of 22 towns with 740 defects): the arrow slit's half width was a constant 8 cm, so on a side of 0.70 m its edge fell 3.2 cm from the
+parapet's inner corner on the shared side (`2 x PT`; at full size the two lie 1.5 cm apart and weld, the weld distance `CFPlan.SNAP` is 3.5 cm) and the plan kept two
+vertices 3.7 cm apart: `SLIT_HW = 0.08 x FS` keeps the ratio. Recess and door depth (`0.5` and `0.55` x FS: two windows of neighbouring sides cut into each other), the door
+leaf's thickness, the notch's reach past the parapet (`NOTCH_EXT`), the parapet stub's bite (`STUB_BITE`) and the margin at the notch ends scale with the cell too. Heights
+do not scale (a level is 4 m: a block is a post 2.6 m across and 4 m a level, so the castle is made of more, slimmer towers; the same castle at 1/2, 1/4, 1/6, 1/8 is in
+`shots/cells_ladder.jpg`, rendered with software OpenGL at medium quality, not with the real look's Forward+ GPU path): the wall is 0.95 m thick, the parapet 0.15 m, a crenel
+0.22 m, a door 0.42 m wide and 2.3 m tall, a window 0.34 m wide. The layered hexagon lattices (`--cs-grid=layer|layer3`) stay as an experiment switch, not in the H cycle.
+
+**2. Walls that lie together merge: the rule is in CELL WIDTHS.** `CSWalls` (`scripts/cs_walls.gd`). W is a cell width, the distance between the middles of two
+neighbouring cells (5.19 m at 1/1, 3.67 at 1/2, **2.60 m at 1/4**; a single wall is 1.9 m x cell thick: 0.95 m at 1/4). Two walls merge when they are parallel (within 0.6 degrees,
+either way round) and
+
+* **side by side:** the lines of two single walls are at most **1.5 W** apart centre to centre (7.8 m at 1/1, 3.9 m at 1/4; for thicker walls: the gap between the strips at most 1.5 W
+  minus one wall thickness, so a rampart keeps taking the walls beside it) **and their spans overlap or touch;**
+* **end to end:** the spans are at most **1 W** apart (5.2 m at 1/1) when the strips touch; the nearer the strips are (the smaller the side gap), the larger the gap along the
+  line that still counts, falling linearly from 1 W to nothing as the side gap grows from 0 to its 1.5 W limit (two walls that are beside each other AND a cell past each
+  other's ends do not make a slab of empty ground);
+* the merged wall is at most **3 W** wide (15.6 m at 1/1, 7.8 m at 1/4: about eight single walls); a wall that would push it past that stays a separate wall;
+* the merged wall is the bounding rectangle of the two in their common direction: **width = the union of the two strips, length = the union of the spans**, heading the first wall's (so
+  it stays on one of the 12 / 16 / 24 directions); a third wall merges into the thick one and widens it, up to the 3 W; two walls laid end to end on one line become one longer wall; the
+  colour is the longer wall's. The closest pair merges first (`CSWalls.merge_list`, bounded: 400 rounds), until nothing merges. Walls at an angle never merge: they stay separate with one joined
+  outline and the corner towers (round 3).
+
+It runs (a) when a wall is built (`add_wall`, one undo step restores both walls); (b) **in the drag preview**: `CSWalls.with_new(walls, new, base)` returns what the wall being
+dragged will be once built ("wall", "absorbed"), the ghost prism is that merged wall (`CSMain._stroke_merged`, cached per pointer stop) and the status line says
+"Straight wall at 30 deg (12 directions), 7.8 m long: joins 1 wall into one 3.2 m thick wall of 9.1 m. Release to build it ..."; (c) when a save loads (`CSWalls.settle`, so walls of an old
+save, laid when the rule was a wall thickness, merge too). The merge distance scales with the cell because the rule is in W: a save's walls are on the cell size the save names.
+
+*Kevin's latest autosave* (24 walls, `tools/autosave_walls.gd`, `KEVIN_WALLS` in the core suite): the three heading-120 walls at (-70.06, 31.46), (-64.87, 31.46) and (-67.47, 17.98) (4.49 m
+and 4.49 m apart, 2.6 m between their strips) and the 300-degree wall at (-80.44, 31.46) laid the other way round beside them become **one wall 28.5 m long and 15.4 m thick**; the rest do
+not merge under this rule: 24 walls become 21. (The other parallel pairs are at least 5.2 m apart along their line (e.g. the 60-degree pairs at 4.49 m side distance but 18 m end to end), at 8.99 m or more
+side distance (two cells), or the same line at an angle; the walls that start at (-44.11, 13.48) are at 270 and 210 degrees, so they stay two walls with a tower on their joint.) The core suite checks
+that every original wall lies inside one remaining wall (a merged wall is at least the union), that no two parallel walls remain within the merge distance (computed independently of `CSWalls`), that the
+same walls scaled by the cell merge the same way on 1/4 cells, and that the result builds closed. castle_004 (round 3's 30 walls) is still 30 -> 18.
+
+**3. Kept:** drag preview then build on release, a plain click builds one block, Esc or the right button cancels, the straight wall button / T, 12 / 16 / 24 directions, the Cells switch (button / H), corner towers.
+
+**Tests:** core 0 failed (`_cell_sizes` over the ladder 1, 2, 4, 6, 8, scale of the sizes, 1/4 and 1/2 closed, 1/6 and 1/8 tower starters build; `_land_box`; `_merging`: the numbers above, the
+preview, Kevin's list), editor 0 failed (the merge by a second drag one cell beside the first: the preview is the merged wall, the release builds ONE wall 3.2 m thick (the strips are 2.25 m apart at 1/4: union 3.2 m, more than double the 0.95 m of one),
+one undo step, closed; the Cells switch through the new ladder).
+
 ## 0a. Round 3 (2026-10-19): smaller cells, merged walls, corners, wall directions
 
 Kevin tested the round-2 build (12-sided cells at the hexagon's size, free straight walls) and found it "not quite there yet": the cells are still too big
@@ -38,13 +115,12 @@ towers); hexagons at 1/2 (clean, but the sides are 1.7 m and the ring of towers 
 (`--cs-grid=layer`: lattices turned 0 and 30 degrees; `layer3`: 0, 20 and 40 degrees; a block in the Voronoi cell of every point of the union, built with
 `CSGrid._generate_layered`): the cells come out as irregular 4- to 12-sided polygons of 19-81 m2 (layer) or 21-202 m2 (layer3) with sides from 0 to
 12 m, slivers need pruning and some stay, so no uniform size and no regular look: not viable, kept only as `--cs-grid=layer|layer3`, not in the H cycle.
-**The default is the 12-sided cell at 1/2 of the area** (`CSGrid.DEFAULT_DIV = 2`); the H cycle is 12-sided 1/2, 1/3, 1/1, hexagons 1/2, 1/3, 1/1. Saved castles
+**(Round 3: the default was the 12-sided cell at 1/2 of the area, `DEFAULT_DIV = 2`, and the H cycle 12-sided 1/2, 1/3, 1/1, hexagons 1/2, 1/3, 1/1; round 4 (0b) made it 1/4 and the ladder 1, 1/2, 1/4, 1/6, 1/8.)** Saved castles
 remember grid and size; a save from round 2 ("dodeca-2") is div 1 and opens as it was.
 
 **2. Merging walls (`scripts/cs_walls.gd`, `CSWalls`).** A wall is `{x, z, deg, len, w, c}` (a save of round 2, `{v, deg, len, c}`, is put on the grid it
 names by `CSWalls.normalize`: from the middle of cell v, one thickness wide). Two walls merge when they are parallel (within 0.6 degrees, either way
-round), the gap between their strips is at most `GAP_LAT_K` = 1 thickness and the gap between their spans along the axis at most `GAP_AX_K` = 0.5
-thickness (overlap, touch, side by side a thickness apart, or end to end), and the result is at most `MAX_W_K` = 8 thicknesses wide. The merged wall is
+round) **and lie close (round 3: a wall thickness apart; round 4 changed the rule to 1.5 cell widths side by side and 1 cell width end to end, section 0b)**, and the result is at most 3 cell widths wide. The merged wall is
 the bounding rectangle of the two in their common direction: width = the union of the two widths, length = the union of the spans, heading kept (so it
 stays on the active direction). The closest pair merges first, repeated until nothing merges (`CSWalls.merge`); it runs when a wall is added
 (`main.add_wall`: one undo step restores both) and when a save loads (`CSWalls.settle`, in `_adopt_grid` and at start). Walls at an angle never merge; their
@@ -450,12 +526,12 @@ cell a click at the press would build on, at the sea level (pressing on top of a
 at which the middle of a cell lies exactly on the line; on any other heading every half cell spacing) nearest to the pointer's shadow on the line (no wall before the pointer has gone half way to the first stop), shortened until every cell the wall
 crosses is on the island. What it previews and builds is **one straight wall**, not cells: `town.walls` holds `{x, z, deg, len, w, c}` (section 0a); the ghost is one
 translucent prism the shape of the wall (`CSBuild.wall_poly`), re-made at every pointer move (shorter when the pointer comes back, another heading
-when it goes round); the status line says "Straight wall at N deg, M m long. Release to build it, Esc or the right button to cancel". Nothing is built while
+when it goes round); the status line says "Straight wall at N deg, M m long. Release to build it, Esc or the right button to cancel" (and, when the wall lies against others, "... joins 1 wall into one 3.2 m thick wall of 9.1 m", section 0b: the ghost is then the merged wall). Nothing is built while
 the button is down; the release adds the wall (`add_wall`) as ONE undo step; Esc, the right button, a change of build type or of mode, or the window
 losing focus cancels. A press moved less than 6 px is a click and builds one block, in either mode. A right-click on a wall (the collision mesh gives it
 its own owner id, `CSBuild.WALL_OWNER + i`, `pick().wall`) takes it away, one undo step; a click on a wall's face builds on the cell beside it.
 
-*What a wall is* (`CSBuild._walls`): a footing and a body of its own, one level high, a rectangle `w` wide (`WALL_THICK` = 1.9 m x cell, 1.34 m at the default cell size; thicker once walls merged) from where it starts to where it ends, whatever cells it crosses (no rule of the cells applies to it: no door, no arch, no corbel under it, the prop
+*What a wall is* (`CSBuild._walls`): a footing and a body of its own, one level high, a rectangle `w` wide (`WALL_THICK` = 1.9 m x cell, 0.95 m at the default cell size; thicker once walls merged) from where it starts to where it ends, whatever cells it crosses (no rule of the cells applies to it: no door, no arch, no corbel under it, the prop
 layer keeps clear of it as of a block). The parapet is made for all the walls together, along the boundary of the walls' union
 (`_wall_loops`: every rectangle's edges cut where the others cross them, the pieces inside another rectangle dropped, collinear overlaps kept once,
 the rest chained into loops), so where walls meet or cross the parapet goes round the joint and not across the walk, a ring of walls has an inner
@@ -519,6 +595,8 @@ in a few ms while one click's rebuild on the worker takes about 1.3 s at the def
 frames waiting. The suite now caps wall-clock time (`TIME_CAP_MS`, 25 min) and each wait for the build is by time (`SETTLE_CAP_MS`, 2 min), not by frames. Quitting while
 the worker thread still ran crashed on exit (access violation): `CSMain.shutdown_build()` waits for the task and is called from `_exit_tree`, before a shot's quit and
 from the suite's own `_quit`. The launch and verify `.bat` files run `Godot --headless --import` first, so new `class_name` scripts are in the class cache.
+
+**Round 4's tests (2026-10-19).** See section 0b ("Tests"). New tools: `tools/cell_stress.gd` (defects and build time per cell size over the starters and random castles), `tools/cost_probe.gd`, `tools/props_profile.gd`, `tools/plan_profile.gd`, `tools/land_check.gd`, `tools/autosave_walls.gd`, `tools/layer_dump.gd`, `tools/defect_blocks.gd`. `tests/verify_cs_editor.gd --cap=SECONDS` raises the time cap (a software renderer draws a frame in seconds: `xvfb-run godot --path . --resolution 1600x900 --script res://tests/verify_cs_editor.gd -- --cs-fresh --cs-quality=low --cap=3300` runs the whole suite in about 11 minutes).
 
 **Round 3's tests (2026-10-19).** `tests/verify_cs_core.gd` gained: `_merging()` (Kevin's exact castle_004 list loaded as a round-2 save: 30 walls merge into at most 20,
 the merged ones are thicker than a single wall, no two parallel walls are left closer than the merge threshold, the merged castle builds closed, walls at
@@ -672,6 +750,12 @@ places windows and crenels from the same side's grid (not widening the crenel, w
 2.9 m towers and wall stubs: look and balance of the starters on them (a courtyard of three big cells, no cottages) were checked only in numbers (the tests and the stress runs) and the plan picture, never by eye in the game on a real GPU.
 
 ## 10. Open (realistic look)
+
+**Open after round 4 (2026-10-19).** Not chased, listed: (1) 1/6 and 1/8 cells: 3 of 30 and 20 of 30 stress towns still have defects (the castle starter's courtyard ground at 1/8, a ring of
+vertices 5-13 cm apart on a vertical line at a stair/parapet joint at 1/6: `tools/cell_stress.gd --cell=6`, then `defect_min.gd --town=12 --cell=6`); (2) no GPU here, so the frame time per size, the Forward+ look
+at 1/4 (the picture is software OpenGL, medium) and the look suite were not run; (3) a click costs 1.2 s of CPU at 1/4 on this machine (the plan's per-layer fixed cost is most of it); (4) walls through
+castles at 16 and 24 directions still have the rare stray-geometry defect of round 3; (5) the merge rule makes a bounding rectangle: two overlapping strips that only half overlap fill the corner
+between them (the end-to-end allowance shrinks with the side gap to keep this small).
 
 - Done in round 2 (see section 6): masonry parallax, string courses, ivy, window glazing, displaced waves, swash foam, cirrus, rays, far islands,
   a colour table per light, Dusk with lit windows, smoke, gulls, a boat, dust and splashes.

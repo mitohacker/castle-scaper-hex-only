@@ -103,6 +103,7 @@ var kept: Array = []
 var fixed: Array = []           # the openings' boxes (kept before any prop)
 var counts := {}                # kind name -> props kept
 var stats := {}
+var _sides_memo := {}               # key(v, k) -> _sides(v, k)
 var _hash := {}                 # Vector2i -> [Box]: kept boxes and openings
 var _solid := {}                # Vector2i -> [grid points with land or blocks whose cell reaches that hash cell]
 var _rad := {}                  # grid point -> how far its cell reaches from it
@@ -298,7 +299,16 @@ func _land_pieces(v: int) -> Array:
 
 func _sides(v: int, k: int) -> Array:
 	## The open sides of block (v, k): [i, middle, way out, length]. A round block's side is where the way to
-	## neighbour i leaves the circle round the tower.
+	## neighbour i leaves the circle round the tower. (Kept per block: several rules ask, and a block next to a string of flags is asked again.)
+	var ck := CSTown.key(v, k)
+	if _sides_memo.has(ck):
+		return _sides_memo[ck]
+	var out := _sides_of(v, k)
+	_sides_memo[ck] = out
+	return out
+
+
+func _sides_of(v: int, k: int) -> Array:
 	var out := []
 	var nb: PackedInt32Array = grid.nbrs[v]
 	var n := nb.size()
@@ -767,13 +777,14 @@ func _bunting() -> void:
 				continue
 			for sd: Array in _sides(v, k):
 				var i: int = sd[0]
-				if CSBuild.h01(v * 16 + i, k, 71) > 0.6:
-					continue
+				if CSBuild.h01(v * 16 + i, k, 71) > 1.0 - 0.4 * grid.cell:
+					continue                    # (a share of the sides in proportion to the cell: a small cell has more sides but not more flags)
 				var mid: Vector2 = sd[1]
 				var out: Vector2 = sd[2]
 				var w := -1
-				for st in 20:
-					var x := grid.nearest(mid + out * (2.4 + 0.6 * float(st)))
+				var ray := 0.6 / grid.cell              # the ray's step: a small cell is a smaller target but the flags still span the same distances
+				for st in ceili(20.0 * grid.cell):
+					var x := grid.nearest(mid + out * (2.4 + ray * float(st)))
 					if x < 0 or (not b.land.has(x) and b.top_of(x) < 0):
 						break                   # off the map, or out over the sea
 					if x != v and town.has(x, k):

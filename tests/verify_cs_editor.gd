@@ -11,6 +11,7 @@ const TIME_CAP_MS := 1500000        # the whole run: 25 minutes of wall-clock ti
                                     # build on the worker takes about a second and a half at the default cell size, so the frames a step needs depend on the machine.)
 const SETTLE_CAP_MS := 120000       # one wait for the castle on screen to catch up with the town
 
+var time_cap_ms := TIME_CAP_MS     # --cap=SECONDS after the "--" raises it (a software renderer draws a frame in seconds)
 var fails := 0
 var checks := 0
 var main: Node3D
@@ -27,6 +28,9 @@ func ok(cond: bool, what: String) -> void:
 
 func _initialize() -> void:
 	t_start = Time.get_ticks_msec()
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--cap="):
+			time_cap_ms = int(a.get_slice("=", 1)) * 1000
 	main = load("res://scenes/main.tscn").instantiate()
 	root.add_child(main)
 	_run.call_deferred()
@@ -38,7 +42,7 @@ func _process(_delta: float) -> bool:
 		push_error("runaway: static memory %d, nodes %d" % [OS.get_static_memory_usage(), Performance.get_monitor(Performance.OBJECT_NODE_COUNT)])
 		_quit(3)
 		return true
-	if Time.get_ticks_msec() - t_start > TIME_CAP_MS:
+	if Time.get_ticks_msec() - t_start > time_cap_ms:
 		print("  FAIL the test ran out of time (%d s, %d frames)" % [(Time.get_ticks_msec() - t_start) / 1000, frames])
 		_quit(2)
 		return true
@@ -211,6 +215,46 @@ func _straight_plan() -> Dictionary:
 					free = false
 			if free:
 				return {"v0": v, "deg": deg, "len": len, "p0": pa, "p1": pb}
+	return {}
+
+
+func _beside_plan(first: Dictionary) -> Dictionary:
+	## A second straight stroke one cell beside the first wall (`first` is a _straight_plan): the same heading and length from a free cell next to the first
+	## one's start, its middle between 2 and 6 m off the first wall's line. {v0, len, p0, p1} as _straight_plan gives them, or {} if none is in view.
+	var grid: CSGrid = main.grid
+	var town: CSTown = main.town
+	var a0: Vector2 = grid.verts[int(first.v0)]
+	var dir := Vector2.from_angle(deg_to_rad(float(first.deg)))
+	var len := float(first.len)
+	for u: int in grid.nbrs[int(first.v0)]:
+		if not grid.is_dodecagon(u) or not grid.buildable(u) or town.top(u) >= 0 or town.has_wild(u):
+			continue
+		var a: Vector2 = grid.verts[u]
+		var lat := absf(dir.cross(a - a0))
+		if lat < 2.0 or lat > 6.0:
+			continue
+		var wa := Vector3(a.x, 0.0, a.y)
+		var off := a + (dir * len).rotated(deg_to_rad(5.0))
+		var wb := Vector3(off.x, 0.0, off.y)
+		if (main.cam as Camera3D).is_position_behind(wa) or (main.cam as Camera3D).is_position_behind(wb):
+			continue
+		var pa := _screen(wa)
+		var pb := _screen(wb)
+		if not _safe(pa) or not _safe(pb) or pa.distance_to(pb) < 100.0:
+			continue
+		var pk: Dictionary = main.pick(pa)
+		if (pk.add as Array).size() != 2 or int((pk.add as Array)[0]) != u or int((pk.add as Array)[1]) != 0:
+			continue
+		var hit: Dictionary = main.pick(pb)
+		var hp: Vector3 = hit.point
+		if hit.point == Vector3.ZERO or CSGrid.snap_direction(Vector2(hp.x, hp.z) - a).angle_to(dir) > 0.01:
+			continue
+		var free := true
+		for c: int in grid.cells_along(a, a + dir * len, false):
+			if not grid.is_whole(c) or town.top(c) >= 0 or town.has_wild(c) or (grid.is_dodecagon(c) and not grid.buildable(c)):
+				free = false
+		if free:
+			return {"v0": u, "len": len, "p0": pa, "p1": pb, "lat": lat}
 	return {}
 
 
@@ -536,6 +580,33 @@ func _run() -> void:
 		await _key(KEY_Y, true)
 		await _settle()
 		ok(town.walls.size() == 1, "Ctrl+Y builds it again")
+		# a second wall dragged one cell beside it: the preview already shows the merged wall, the release builds ONE wall, one undo step takes the second back
+		var bp := _beside_plan(swp)
+		if not bp.is_empty():
+			var base_b := CSWalls.thickness(grid)
+			var hist_b: int = main.history.size()
+			var first_w: Dictionary = (town.walls[0] as Dictionary).duplicate()
+			await _button(MOUSE_BUTTON_LEFT, true, bp.p0)
+			await _move_along(MOUSE_BUTTON_LEFT, _path([bp.p0, bp.p1]))
+			var mg: Dictionary = main._stroke_merged()
+			var mw: Dictionary = mg.get("wall", {})
+			ok(main.stroke_wall.has("len") and int(mg.get("absorbed", 0)) == 1 and absf(float(mw.get("w", 0.0)) - (float(bp.lat) + base_b)) < 0.02,
+				"dragged one cell (%.2f m) beside the first, the preview is already the merged wall: %.2f m thick (%s)" % [float(bp.lat), float(mw.get("w", 0.0)), main.status_msg])
+			ok(main.status_msg.contains("joins 1 wall"), "and the cue says it joins the other wall")
+			await _button(MOUSE_BUTTON_LEFT, false, bp.p1)
+			await _settle()
+			ok(town.walls.size() == 1 and absf(float(town.walls[0].w) - (float(bp.lat) + base_b)) < 0.02 and float(town.walls[0].w) > 2.0 * base_b - 0.01,
+				"the release builds ONE wall, %.2f m thick (two strips %.2f m apart: more than double %.2f m)" % [float(town.walls[0].w), float(bp.lat), base_b])
+			ok(float(town.walls[0].len) >= float(swp.len) - 0.01 and main.history.size() == hist_b + 1, "as one undo step (%d new), as long as the first or longer (%.1f m)" % [main.history.size() - hist_b, float(town.walls[0].len)])
+			var merged_ok := true
+			var wb_audit := CFAudit.check(main.build.mesh, [CFMesh.Z_CLOTH_A, CFMesh.Z_CLOTH_B])
+			ok(int(wb_audit.open_other) + int(wb_audit.non_manifold) + int(wb_audit.flipped) + int(wb_audit.t_junctions) == 0 and merged_ok, "the merged wall builds closed")
+			await _key(KEY_Z, true)
+			await _settle()
+			ok(town.walls.size() == 1 and absf(float(town.walls[0].w) - float(first_w.w)) < 1e-3 and absf(float(town.walls[0].len) - float(first_w.len)) < 1e-3,
+				"Ctrl+Z takes the second back: the first wall is as it was")
+		else:
+			print("  (no free stretch beside the first wall in view: the merge is left to the core suite)")
 		await _key(KEY_Z, true)
 		await _settle()
 		# Esc and the right button cancel
@@ -904,36 +975,36 @@ func _run() -> void:
 	Input.parse_input_event(ctrl_e)
 	ok((main.cam_goal as Vector3).distance_to(g4) < 0.01, "with Ctrl held (Ctrl+S saves) W does not move the view")
 	# the Cells switch: H (or the Cells button) asks, a second press within five seconds goes to the next grid of CSGrid.variants() (a new empty sea):
-	# the game starts on 12-sided cells at 1/2 of the area, then 1/3, the full size, hexagons at 1/2 ...; Shift+H goes back
+	# the game starts on 12-sided cells at 1/4 of the area, then 1/6, 1/8, 1/2, the full size, hexagons at 1/4 ...; Shift+H goes back
 	await _settle()
 	var cb: Button = main.ui.b_cells
-	ok(cb != null and cb.is_visible_in_tree() and main.grid.kind == CSGrid.KIND_DODECA and main.grid.div == CSGrid.DEFAULT_DIV and cb.text.contains("12") and cb.text.contains("1/2"),
-		"a Cells button shows the 12-sided cells at half the area, the default (%s)" % cb.text)
-	ok(absf(main.grid.side - 0.98) < 0.01 and absf(CSWalls.thickness(main.grid) - CSBuild.WALL_THICK) < 1e-6, "the smaller cells: side %.2f m, a wall %.2f m thick" % [main.grid.side, CSBuild.WALL_THICK])
+	ok(cb != null and cb.is_visible_in_tree() and main.grid.kind == CSGrid.KIND_DODECA and main.grid.div == CSGrid.DEFAULT_DIV and cb.text.contains("12") and cb.text.contains("1/4"),
+		"a Cells button shows the 12-sided cells at a quarter of the area, the default (%s)" % cb.text)
+	ok(CSGrid.DEFAULT_DIV == 4 and absf(main.grid.side - 0.695) < 0.01 and absf(CSWalls.thickness(main.grid) - CSBuild.WALL_THICK) < 1e-6, "the smaller cells: side %.2f m, a wall %.2f m thick" % [main.grid.side, CSBuild.WALL_THICK])
 	var blocks_before := town.size()
 	await _key(KEY_H, false)
 	ok(main.grid.kind == CSGrid.KIND_DODECA and main.grid.div == CSGrid.DEFAULT_DIV and town.size() == blocks_before, "the first press of H only asks")
 	await _key(KEY_H, false)
 	await _settle()
-	ok(main.grid.kind == CSGrid.KIND_DODECA and main.grid.div == 3 and main.town.grid_div == 3 and main.town.size() == 0 and cb.text.contains("1/3"), "the second press goes to the 12-sided cells at 1/3 of the area, an empty sea (%s)" % cb.text)
+	ok(main.grid.kind == CSGrid.KIND_DODECA and main.grid.div == 6 and main.town.grid_div == 6 and main.town.size() == 0 and cb.text.contains("1/6"), "the second press goes to the 12-sided cells at 1/6 of the area, an empty sea (%s)" % cb.text)
 	var dv: int = main.grid.nearest(Vector2.ZERO)
 	await _click(_screen(Vector3(main.grid.verts[dv].x, 0.0, main.grid.verts[dv].y)))
 	await _settle()
 	ok(main.town.has(dv, 0) and (main.grid.nbrs[dv] as PackedInt32Array).size() == 12, "a click builds a block on a 12-sided cell of the smaller size")
-	for _i in 2:                       # on to the full size, then the hexagons at 1/2
+	for _i in 4:                       # on to 1/8, 1/2, the full size, then the hexagons at 1/4
 		await _key(KEY_H, false)
 		await _key(KEY_H, false)
 		await _settle()
-	ok(main.grid.kind == CSGrid.KIND_HEX and main.town.grid_kind == CSGrid.KIND_HEX and main.grid.div == 2 and main.town.size() == 0 and cb.text.contains("6"), "two more switches reach the hexagon grid at 1/2 of the area (%s)" % cb.text)
+	ok(main.grid.kind == CSGrid.KIND_HEX and main.town.grid_kind == CSGrid.KIND_HEX and main.grid.div == 4 and main.town.size() == 0 and cb.text.contains("6"), "four more switches reach the hexagon grid at 1/4 of the area (%s)" % cb.text)
 	var hv: int = main.grid.nearest(Vector2.ZERO)
 	await _click(_screen(Vector3(main.grid.verts[hv].x, 0.0, main.grid.verts[hv].y)))
 	await _settle()
 	ok(main.town.has(hv, 0) and (main.grid.nbrs[hv] as PackedInt32Array).size() == 6, "a click builds a block on a hexagon")
-	for _i in 3:                       # Shift+H back: the full size, 1/3, then the default
+	for _i in 5:                       # Shift+H back: the full size, 1/2, 1/8, 1/6, then the default
 		await _key_shift(KEY_H)
 		await _key_shift(KEY_H)
 		await _settle()
-	ok(main.grid.kind == CSGrid.KIND_DODECA and main.town.grid_kind == CSGrid.KIND_DODECA and main.grid.div == CSGrid.DEFAULT_DIV and main.town.size() == 0, "Shift+H goes back to the 12-sided cells at 1/2 of the area")
+	ok(main.grid.kind == CSGrid.KIND_DODECA and main.town.grid_kind == CSGrid.KIND_DODECA and main.grid.div == CSGrid.DEFAULT_DIV and main.town.size() == 0, "Shift+H goes back to the 12-sided cells at 1/4 of the area")
 	_end()
 
 

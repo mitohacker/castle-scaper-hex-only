@@ -27,14 +27,16 @@ static var PT := 0.3            # parapet thickness
 const PH := 1.05                # parapet height
 const MERLON_LOW := 0.45
 static var NOTCH_W := 0.45
+static var NOTCH_EXT := 0.2           # how far a notch's cut reaches past the parapet's faces (kept in step with the cell: two cuts at a reflex corner must not meet)
 const NOTCH_STEP := 1.45
 static var CORNER_MARGIN := 0.2      # no notch within this of a corner of a parapet (the cell's side is only 1.39 m)
 static var DOOR_HW := 0.42           # half the width of a door (a side of 1.39 m: 0.28 m of wall each side)
+static var SLIT_HW := 0.08           # half the width of an arrow slit (its edge lies 1.5 cm from the parapet's inner corner on a side: scales with the cell so the two stay welded)
 static var WINDOW_HW := 0.34         # half the width of a window
 static var MIN_SIDE := 1.3           # the shortest side that takes a door, a window or a flight of stairs
 const ROUND_SIDES := 16
 static var STUB_RUN := 0.18          # how far a stub runs past the parapet's inner corner (a side is only 1.39 m)
-const STUB_BITE := 0.15         # how far a parapet stub reaches into the taller block it ends against
+static var STUB_BITE := 0.15       # how far a parapet stub reaches into the taller block it ends against
 static var ARCH_PIER := 0.3          # the thinnest pier between an arch and the block it springs from (m)
 static var ARCH_MIN_W := 0.7         # the narrowest half span worth an arch
 static var ARCH_MAX_W := 1.1         # half the widest passage: on the regular grid two arches side by side keep a wall of 0.3 m between them
@@ -85,11 +87,14 @@ static func set_scale(side: float, cell: float = 1.0) -> void:
 	FS = f
 	PT = 0.3 * f
 	NOTCH_W = 0.45 * f
+	NOTCH_EXT = maxf(0.2 * f * f, 0.06)
 	CORNER_MARGIN = 0.2 * f
 	DOOR_HW = 0.42 * f
 	WINDOW_HW = 0.34 * f
+	SLIT_HW = 0.08 * f
 	MIN_SIDE = 1.3 * f
 	STUB_RUN = 0.18 * f
+	STUB_BITE = 0.15 * f
 	ARCH_PIER = 0.3 * f
 	ARCH_MIN_W = 0.7 * f
 	ARCH_MAX_W = 1.1 * f
@@ -306,16 +311,14 @@ func build(g: CSGrid, t: CSTown, prev: CSBuild = null) -> void:
 	_corbel_faces.clear()
 	_covered.clear()
 	_gaps.clear()
-	_find_land()
-	_find_supports()
-	_find_doors()
-	_ground()
-	_bodies()
-	_walls()
-	_arches()
-	_tops()
-	_supports()
-	_openings()
+	var split := {}
+	var tl := Time.get_ticks_usec()
+	for step: Array in [["land", _find_land], ["supports", _find_supports], ["doors", _find_doors], ["ground", _ground], ["bodies", _bodies], ["walls", _walls],
+			["arches", _arches], ["tops", _tops], ["supports2", _supports], ["openings", _openings]]:
+		(step[1] as Callable).call()
+		var tn := Time.get_ticks_usec()
+		split[step[0]] = float(tn - tl) / 1000.0
+		tl = tn
 	var t1 := Time.get_ticks_usec()
 	plan.run(mesh, prev.plan if prev != null else null)
 	var t2 := Time.get_ticks_usec()
@@ -325,31 +328,50 @@ func build(g: CSGrid, t: CSTown, prev: CSBuild = null) -> void:
 	for kk: int in pieces:
 		pc[pieces[kk]] = int(pc.get(pieces[kk], 0)) + 1
 	stats = {"blocks": town.size(), "tris": mesh.tri_count(), "layers": plan.layer_count(), "ms": float(Time.get_ticks_usec() - t0) / 1000.0,
-		"ms_rules": float(t1 - t0) / 1000.0, "ms_plan": float(t2 - t1) / 1000.0, "caps": caps.size(), "pieces": pc, "stairs": stairs.size(), "hats": hats.size(), "facades": facades}
+		"ms_rules": float(t1 - t0) / 1000.0, "ms_plan": float(t2 - t1) / 1000.0, "ms_split": split, "caps": caps.size(), "pieces": pc, "stairs": stairs.size(), "hats": hats.size(), "facades": facades}
 
 
 func _find_land() -> void:
-	## Ground blocks and the cells under bridges are land; so is every empty cell the sea cannot reach (a courtyard).
+	## Ground blocks and the cells under bridges are land; so is every empty cell the sea cannot reach (a courtyard). Only the cells in a box round the
+	## town are looked at (everything beyond it is open sea: the box is grown by two cell spacings, an empty margin all round), so a click costs the
+	## same however many small cells the island has.
+	var cols := town.columns()
+	var lo := Vector2.ZERO
+	var hi := Vector2.ZERO
+	for i in cols.size():
+		var p := grid.verts[cols[i]]
+		lo = p if i == 0 else lo.min(p)
+		hi = p if i == 0 else hi.max(p)
+	var margin := Vector2(grid.spacing, grid.spacing) * 2.0
+	var box := grid.points_in_rect(lo - margin, hi + margin)
 	var nv := grid.verts.size()
+	var inb := PackedByteArray()
+	inb.resize(nv)
+	for v in box:
+		inb[v] = 1
 	var sea := PackedByteArray()
 	sea.resize(nv)
 	var stack: Array[int] = []
-	for v in nv:
-		if not grid.buildable(v) and grid.is_dodecagon(v):
-			sea[v] = 1                  # the sea ring (the little triangles between the blocks are no sea of their own: the sea reaches them from a cell beside)
+	for v in box:
+		var edge := not grid.buildable(v) and grid.is_dodecagon(v)     # the sea ring (the little triangles between the blocks are no sea of their own: the sea reaches them from a cell beside)
+		if not edge:
+			for u in grid.nbrs[v]:
+				if inb[u] == 0:
+					edge = true                                         # on the box's rim: beyond it is sea
+					break
+		if edge and not (town.has(v, 0) or top_of(v) >= 1):
+			sea[v] = 1
 			stack.append(v)
-	var blocked := func(v: int) -> bool:
-		return town.has(v, 0) or top_of(v) >= 1
 	var guard := 0
 	while not stack.is_empty() and guard < nv * 8:
 		guard += 1
 		var v: int = stack.pop_back()
 		for u in grid.nbrs[v]:
-			if sea[u] or blocked.call(u):
+			if sea[u] or inb[u] == 0 or town.has(u, 0) or top_of(u) >= 1:
 				continue
 			sea[u] = 1
 			stack.append(u)
-	for v in nv:
+	for v in box:
 		if not grid.buildable(v):
 			continue
 		if town.has(v, 0):
@@ -358,8 +380,8 @@ func _find_land() -> void:
 			land[v] = "passage"
 		elif not sea[v]:
 			land[v] = "court"
-	for t in range(grid.d_count, nv):
-		if not grid.is_whole(t):
+	for t in box:
+		if t < grid.d_count or not grid.is_whole(t):
 			continue
 		var n := 0
 		for u in grid.nbrs[t]:
@@ -1212,7 +1234,7 @@ func _ring_top(g: int, owner: int, c: int, p: Vector2, y0: float, y_anchor: floa
 			continue
 		var dir := (b - a) / len
 		var centre := (a + b) * 0.5 + Vector2(-dir.y, dir.x) * PT * 0.5
-		plan.add_layer(cut, CFShapes.rect(centre, dir, minf(NOTCH_W * 0.5, len * 0.3), PT * 0.5 + 0.2), y0 + MERLON_LOW, y0 + PH + 0.3)
+		plan.add_layer(cut, CFShapes.rect(centre, dir, minf(NOTCH_W * 0.5, len * 0.3), PT * 0.5 + NOTCH_EXT), y0 + MERLON_LOW, y0 + PH + 0.3)
 
 
 func _walk_loops(area: Array, k: int) -> Array:
@@ -1367,18 +1389,18 @@ func _walk_battlements(area: Dictionary) -> void:
 				var gp: Array = gaps[a]
 				var s0: float = gp[0]
 				var s1: float = gp[1]
-				plan.add_layer(gap_cut, CFShapes.rect(a + dir * ((s0 + s1) * 0.5) + nrm * PT * 0.5, dir, (s1 - s0) * 0.5, PT * 0.5 + 0.2),
+				plan.add_layer(gap_cut, CFShapes.rect(a + dir * ((s0 + s1) * 0.5) + nrm * PT * 0.5, dir, (s1 - s0) * 0.5, PT * 0.5 + NOTCH_EXT),
 					y0, y0 + PH + 0.3)
 				continue
-			var lo := 0.08 + NOTCH_W * 0.5 + (CORNER_MARGIN if corner[i] else 0.0)
-			var hi := len - 0.08 - NOTCH_W * 0.5 - (CORNER_MARGIN if corner[(i + 1) % n] else 0.0)
+			var lo := 0.08 * FS + NOTCH_W * 0.5 + (CORNER_MARGIN if corner[i] else 0.0)
+			var hi := len - 0.08 * FS - NOTCH_W * 0.5 - (CORNER_MARGIN if corner[(i + 1) % n] else 0.0)
 			if hi < lo:
 				continue
 			var count := maxi(1, int((hi - lo) / NOTCH_STEP) + 1)
 			for j in count:
 				var s := lo + (hi - lo) * (float(j) + 0.5) / float(count)
 				var centre := a + dir * s + nrm * PT * 0.5
-				plan.add_layer(cut, CFShapes.rect(centre, dir, NOTCH_W * 0.5, PT * 0.5 + 0.2), y0 + MERLON_LOW, y0 + PH + 0.3)
+				plan.add_layer(cut, CFShapes.rect(centre, dir, NOTCH_W * 0.5, PT * 0.5 + NOTCH_EXT), y0 + MERLON_LOW, y0 + PH + 0.3)
 
 
 # --- stairs ----------------------------------------------------------------------------------------
@@ -1643,14 +1665,14 @@ func _openings() -> void:
 						_door(v, sp, out, y)
 						_note("door", v, k, i, sp, out, y, y + 2.3, DOOR_HW, rnd)
 					elif not land.has(u) and roll < 0.3:
-						_recess(cs, sp, out, y + 1.4, 1.1, 0.08)
-						_note("slit", v, k, i, sp, out, y + 1.4, y + 2.5, 0.08, rnd)
+						_recess(cs, sp, out, y + 1.4, 1.1, SLIT_HW)
+						_note("slit", v, k, i, sp, out, y + 1.4, y + 2.5, SLIT_HW, rnd)
 				else:
 					if rnd and roll < 0.35:
 						continue
 					if roll < 0.45:
-						_recess(cs, sp, out, y + 1.3, 1.4, 0.08)        # an arrow slit
-						_note("slit", v, k, i, sp, out, y + 1.3, y + 2.7, 0.08, rnd)
+						_recess(cs, sp, out, y + 1.3, 1.4, SLIT_HW)        # an arrow slit
+						_note("slit", v, k, i, sp, out, y + 1.3, y + 2.7, SLIT_HW, rnd)
 					elif roll < 0.75:
 						_recess(cs, sp, out, y + 1.4, 1.25, WINDOW_HW)  # a window
 						_note("window", v, k, i, sp, out, y + 1.4, y + 2.65, WINDOW_HW, rnd)
@@ -1663,20 +1685,21 @@ func _note(kind: String, v: int, k: int, i: int, sp: Vector2, out: Vector2, y0: 
 
 
 func _recess(cut_stack: int, surface: Vector2, out: Vector2, y0: float, h: float, half_w: float, depth: float = 0.5) -> void:
+	depth *= FS                            # a recess is as deep as the wall is wide: on a small cell two neighbouring windows would cut into each other
 	var centre := surface - out * (depth * 0.5 - 0.15)
 	plan.add_layer(cut_stack, CFShapes.rect(centre, out, depth * 0.5 + 0.15, half_w), y0, y0 + h, CFMesh.Z_DARK)
 
 
 func _door(v: int, surface: Vector2, out: Vector2, y: float, sty: int = 0) -> void:
 	var cs := plan.new_stack(CFPlan.OP_CUT, 10000 + v, {"owner": v + 1, "label": "door", "zone": CSStyle.wall_zone(sty)})
-	var depth := 0.55
+	var depth := 0.55 * FS
 	plan.add_layer(cs, CFShapes.rect(surface - out * (depth * 0.5 - 0.15), out, depth * 0.5 + 0.15, DOOR_HW), y, y + 2.3)
 	var lz := CFMesh.Z_DOOR if sty == CSStyle.CASTLE else CSStyle.trim_zone(sty)
 	var leaf := plan.new_stack(CFPlan.OP_ADD, 70000 + v, {"zone": lz, "top_zone": lz, "owner": v + 1, "prio": 12,
 		"flags": CFMesh.F_PLAIN, "label": "door leaf", "seed": colour_seed(town.colour(v, 0))})
 	# its back face is the recess's own back wall: a leaf reaching 2 cm behind it puts two corners exactly one weld distance apart (castle doors did,
 	# and on the hex grid's short sides that left a 2 cm sliver open)
-	plan.add_layer(leaf, CFShapes.rect(surface - out * (depth - 0.07), out, 0.07, DOOR_HW), y, y + 2.2)
+	plan.add_layer(leaf, CFShapes.rect(surface - out * (depth - 0.07 * FS), out, 0.07 * FS, DOOR_HW), y, y + 2.2)
 
 
 func _hats() -> void:

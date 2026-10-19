@@ -43,6 +43,7 @@ func _init() -> void:
 	_hex_grid()
 	print("== smaller cells")
 	_cell_sizes()
+	_land_box()
 	print("== castles audited")
 	_audits()
 	print("== building styles")
@@ -614,36 +615,21 @@ func _merging() -> void:
 	ok(t.walls.size() <= 20 and t.walls.size() < CASTLE_004.size() - 8 and merges == CASTLE_004.size() - t.walls.size(),
 		"castle_004: 30 walls merge into %d (%d merges)" % [t.walls.size(), merges])
 	ok(thick >= 1 and thickest > 3.0 * base, "the merged walls are thicker than a single wall (%d of them, the thickest %.1f m against %.1f m)" % [thick, thickest, base])
-	# no two walls left that are parallel and closer than the merge threshold (apart from ones whose union would be thicker than the most allowed)
-	var close := 0
-	for i in t.walls.size():
-		for j in range(i + 1, t.walls.size()):
-			var a: Dictionary = t.walls[i]
-			var b: Dictionary = t.walls[j]
-			var ua := CSWalls.dir_of(a)
-			var ub := CSWalls.dir_of(b)
-			if absf(ua.cross(ub)) > 0.01:
-				continue
-			var na := Vector2(-ua.y, ua.x)
-			var pa := Vector2(float(a.x), float(a.z))
-			var pb := Vector2(float(b.x), float(b.z))
-			var lat := absf(na.dot(pb - pa)) - (float(a.w) + float(b.w)) * 0.5
-			var s0 := ua.dot(pb - pa)
-			var s1 := s0 + ua.dot(ub) * float(b.len)
-			var ax := maxf(minf(s0, s1) - float(a.len), -maxf(s0, s1))
-			if lat < CSWalls.GAP_LAT_K * base and ax < CSWalls.GAP_AX_K * base:
-				close += 1
-	ok(close == 0, "no two parallel walls are left closer than %.1f m (%d pairs)" % [CSWalls.GAP_LAT_K * base, close])
+	# no two walls left that are parallel, lie within the merge distance and would not be wider than the most allowed together
+	var close := _unmerged_pairs(t.walls, base)
+	ok(close == 0, "no two parallel walls are left within the merge distance of %.1f m side by side / %.1f m end to end (%d pairs)" % [CSWalls.MERGE_LAT_K * CSWalls.cell_width(base), CSWalls.MERGE_AX_K * CSWalls.cell_width(base), close])
 	# the merged castle is one closed skin, and walls that cross or meet at an angle did not merge
 	_closed(_built(t), "castle_004 after the merge, built")
 	var angles := {}
 	for w: Dictionary in t.walls:
 		angles[int(roundf(fposmod(float(w.deg), 180.0)))] = true
 	ok(angles.size() >= 4, "walls at different angles stay separate walls (%d directions)" % angles.size())
-	# the merge in small: two strips side by side make one wall twice as thick; one a wall's width away too; ten metres away they stay two
+	# the merge in small: two strips side by side make one wall twice as thick; one a cell away too; ten metres away they stay two
 	var t2 := CSTown.new()
 	var c := g1.nearest(Vector2.ZERO)
 	var p := g1.verts[c]
+	var cw := CSWalls.cell_width(base)
+	ok(absf(cw - g1.spacing) < 1e-3, "a cell width is the spacing of the cells (%.3f m)" % cw)
 	t2.wall_add(p.x, p.y, 0.0, 10.0, base, 1)
 	t2.wall_add(p.x, p.y + base, 0.0, 10.0, base, 1)
 	CSWalls.merge(t2, base)
@@ -651,12 +637,63 @@ func _merging() -> void:
 	t2.wall_add(p.x + 2.0, p.y + 2.0 * base + 0.5 * base, 0.0, 6.0, base, 1)
 	CSWalls.merge(t2, base)
 	ok(t2.walls.size() == 1 and absf(float(t2.walls[0].w) - 3.5 * base) < 0.1, "one a half thickness beyond joins too (%.2f m thick)" % float(t2.walls[0].w))
-	t2.wall_add(p.x, p.y + 10.0, 0.0, 10.0, base, 1)
-	t2.wall_add(p.x + 12.0, p.y, 0.0, 10.0, base, 1)
+	t2.wall_add(p.x, p.y + 20.0, 0.0, 10.0, base, 1)
+	t2.wall_add(p.x + 30.0, p.y, 0.0, 10.0, base, 1)
 	t2.wall_add(p.x + 3.0, p.y - 3.0, 90.0, 10.0, base, 1)
 	var before := t2.walls.size()
 	CSWalls.merge(t2, base)
-	ok(before == 4 and t2.walls.size() == 4, "walls ten metres apart, end to end far apart, or crossing stay separate (%d)" % t2.walls.size())
+	ok(before == 4 and t2.walls.size() == 4, "walls 20 m (four cell widths) apart, end to end 20 m (four) apart, or crossing stay separate (%d)" % t2.walls.size())
+	# the merge distance is in cell widths: one and a half between the lines, one along the line
+	var t4 := CSTown.new()
+	t4.wall_add(p.x, p.y, 0.0, 12.0, base, 1)
+	t4.wall_add(p.x + 1.0, p.y + 1.45 * cw, 0.0, 12.0, base, 1)       # 1.45 cell widths beside: joins
+	ok(CSWalls.merge(t4, base) == 1 and absf(float(t4.walls[0].w) - (1.45 * cw + base)) < 1e-3, "a wall 1.45 cell widths beside another joins it (%.2f m thick)" % float(t4.walls[0].w))
+	var t5 := CSTown.new()
+	t5.wall_add(p.x, p.y, 0.0, 12.0, base, 1)
+	t5.wall_add(p.x + 1.0, p.y + 1.6 * cw, 0.0, 12.0, base, 1)        # 1.6 beside: stays
+	ok(CSWalls.merge(t5, base) == 0 and t5.walls.size() == 2, "a wall 1.6 cell widths beside another stays a separate wall")
+	var t6 := CSTown.new()
+	t6.wall_add(p.x, p.y, 30.0, 12.0, base, 1)
+	var u6 := Vector2.from_angle(deg_to_rad(30.0))
+	t6.wall_add(p.x + u6.x * (12.0 + 0.9 * cw), p.y + u6.y * (12.0 + 0.9 * cw), 30.0, 7.0, base, 2)   # end to end, 0.9 cell widths apart: one longer wall
+	ok(CSWalls.merge(t6, base) == 1 and absf(float(t6.walls[0].len) - (12.0 + 0.9 * cw + 7.0)) < 1e-3 and absf(float(t6.walls[0].w) - base) < 1e-3,
+		"collinear walls 0.9 cell widths apart end to end become one longer wall (%.2f m long, %.2f m thick)" % [float(t6.walls[0].len), float(t6.walls[0].w)])
+	var t7 := CSTown.new()
+	t7.wall_add(p.x, p.y, 30.0, 12.0, base, 1)
+	t7.wall_add(p.x + u6.x * (12.0 + 1.3 * cw), p.y + u6.y * (12.0 + 1.3 * cw), 30.0, 7.0, base, 2)
+	ok(CSWalls.merge(t7, base) == 0, "... 1.3 cell widths apart end to end they do not")
+	var t8 := CSTown.new()
+	t8.wall_add(p.x, p.y, 0.0, 10.0, base, 1)
+	t8.wall_add(p.x + 10.0 + 0.8 * cw, p.y + 1.3 * cw, 0.0, 10.0, base, 1)    # a staggered pair: beside and also well past the end - no empty slab
+	ok(CSWalls.merge(t8, base) == 0, "walls that are beside each other and also a cell past each other's end do not merge into a slab")
+	# a third wall widens the thick one; past the most allowed (3 cell widths) the next stays apart
+	var t9 := CSTown.new()
+	for i in 5:
+		t9.wall_add(p.x, p.y + float(i) * 0.866 * cw, 0.0, 14.0, base, 1)
+	CSWalls.merge(t9, base)
+	var widest := 0.0
+	for w: Dictionary in t9.walls:
+		widest = maxf(widest, float(w.w))
+	ok(t9.walls.size() == 2 and widest <= CSWalls.MAX_W_K * cw + 1e-3 and widest >= 2.0 * 0.866 * cw + base - 0.01, "five rows a cell apart: the thick wall stops at %.1f m (at most %.1f m), the rest stays apart (%d walls)" % [widest, CSWalls.MAX_W_K * cw, t9.walls.size()])
+	# opposite headings are parallel too
+	var t10 := CSTown.new()
+	t10.wall_add(p.x, p.y, 60.0, 9.0, base, 1)
+	var u60 := Vector2.from_angle(deg_to_rad(60.0))
+	t10.wall_add(p.x + u60.x * 9.0 + u60.y * 3.0, p.y + u60.y * 9.0 - u60.x * 3.0, 240.0, 9.0, base, 1)
+	ok(CSWalls.merge(t10, base) == 1 and float(t10.walls[0].w) > 2.0 * base, "a wall laid the other way round beside another merges (%.2f m thick)" % float(t10.walls[0].w))
+	# the preview: what a wall about to be laid becomes, without touching the walls
+	var t11 := CSTown.new()
+	t11.wall_add(p.x, p.y, 0.0, 12.0, base, 1)
+	var nw := {"x": p.x + 2.0, "z": p.y + 0.9 * cw, "deg": 0.0, "len": 10.0, "w": base, "c": 3}
+	var pv := CSWalls.with_new(t11.walls, nw, base)
+	ok(int(pv.absorbed) == 1 and absf(float((pv.wall as Dictionary).w) - (0.9 * cw + base)) < 1e-3 and t11.walls.size() == 1 and float(t11.walls[0].w) == base and not (pv.wall as Dictionary).has("_new"),
+		"with_new says what the new wall becomes (%.2f m thick, %d absorbed) and leaves the walls alone" % [float((pv.wall as Dictionary).w), int(pv.absorbed)])
+	var far := CSWalls.with_new(t11.walls, {"x": p.x, "z": p.y + 3.0 * cw, "deg": 0.0, "len": 10.0, "w": base, "c": 3}, base)
+	ok(int(far.absorbed) == 0 and float((far.wall as Dictionary).len) == 10.0, "a wall far away stays what it is")
+	t11.wall_add(nw.x, nw.z, nw.deg, nw.len, nw.w, nw.c)
+	CSWalls.merge(t11, base)
+	ok(t11.walls.size() == 1 and absf(float(t11.walls[0].w) - float((pv.wall as Dictionary).w)) < 1e-3 and absf(float(t11.walls[0].len) - float((pv.wall as Dictionary).len)) < 1e-3, "and building it makes exactly that wall")
+	_autosave_walls()
 	# merged and built: the parapet follows the outer edge of the thicker wall
 	var t3 := CSTown.new()
 	t3.wall_add(p.x, p.y, 0.0, 12.0, base, 1)
@@ -671,6 +708,98 @@ func _merging() -> void:
 	back.from_dict(t3.to_dict())
 	CSWalls.settle(back, g1)
 	ok(back.walls.size() == 1 and absf(float(back.walls[0].w) - 3.0 * base) < 1e-3, "a merged wall saves and loads as one wall")
+
+
+func _unmerged_pairs(walls: Array, base: float) -> int:
+	## Pairs of walls left that are parallel, lie closer than the merge distance (a rule worked out here from the numbers, not asked of CSWalls) and whose
+	## union is not wider than the most allowed: none may remain after a merge. Side by side: lines at most 1.5 cell widths apart (less a thickness for
+	## thick walls) with spans that overlap; end to end: strips touching and spans at most a cell width apart.
+	var cw := CSWalls.cell_width(base)
+	var n := 0
+	for i in walls.size():
+		for j in range(i + 1, walls.size()):
+			var a: Dictionary = walls[i]
+			var b: Dictionary = walls[j]
+			var ua := CSWalls.dir_of(a)
+			var ub := CSWalls.dir_of(b)
+			if absf(ua.cross(ub)) > 0.01:
+				continue
+			var na := Vector2(-ua.y, ua.x)
+			var d := Vector2(float(b.x), float(b.z)) - Vector2(float(a.x), float(a.z))
+			var lat := na.dot(d)
+			var lat_gap := absf(lat) - (float(a.w) + float(b.w)) * 0.5
+			var s0 := ua.dot(d)
+			var s1 := s0 + ua.dot(ub) * float(b.len)
+			var ax := maxf(minf(s0, s1) - float(a.len), -maxf(s0, s1))
+			var union_w := maxf(float(a.w) * 0.5, lat + float(b.w) * 0.5) - minf(-float(a.w) * 0.5, lat - float(b.w) * 0.5)
+			var side_by_side := lat_gap <= CSWalls.MERGE_LAT_K * cw - base - 0.05 and ax <= -0.05
+			var end_to_end := lat_gap <= 0.05 and ax <= CSWalls.MERGE_AX_K * cw - 0.05
+			if (side_by_side or end_to_end) and union_w <= CSWalls.MAX_W_K * cw - 0.05:
+				n += 1
+	return n
+
+
+func _covers(r: Dictionary, o: Dictionary) -> bool:
+	## Does the rectangle of wall r contain that of wall o (to 5 cm)?
+	var ur := CSWalls.dir_of(r)
+	var nr := Vector2(-ur.y, ur.x)
+	var p0 := Vector2(float(r.x), float(r.z))
+	var uo := CSWalls.dir_of(o)
+	var no := Vector2(-uo.y, uo.x)
+	var q0 := Vector2(float(o.x), float(o.z))
+	for t in [0.0, float(o.len)]:
+		for sgn in [-0.5, 0.5]:
+			var q: Vector2 = q0 + uo * t + no * (float(o.w) * sgn)
+			var along := ur.dot(q - p0)
+			var across := nr.dot(q - p0)
+			if along < -0.05 or along > float(r.len) + 0.05 or absf(across) > float(r.w) * 0.5 + 0.05:
+				return false
+	return true
+
+
+const KEVIN_WALLS := [[-20.7591,-8.9889,330,26.9668,1.9,1],[0,-17.9779,120,15.5693,1.9,1],[-20.7591,-8.9889,240,15.5693,1.9,1],[-28.5437,-22.4723,180,10.3795,1.9,1],[-38.9232,-22.4723,90,11.9852,1.9,1],[-36.3284,-8.9889,60,10.3795,1.9,1],[-44.113,-4.4945,60,15.5693,1.9,1],[-28.5437,4.4945,150,17.9779,1.9,1],[-44.113,13.4834,270,11.9852,1.9,1],[-44.113,13.4834,210,17.9779,1.9,1],[-31.1386,26.9668,180,10.3795,1.9,1],[-40.2207,26.9668,90,26.9668,14.8744,1],[-31.1386,26.9668,60,15.5693,1.9,1],[-23.3539,40.4502,0,10.3795,1.9,1],[-12.9744,40.4502,60,5.1898,1.9,1],[-10.3795,44.9447,150,8.9889,1.9,1],[-36.3284,26.9668,120,5.1898,1.9,1],[-31.1386,44.9447,30,8.9889,1.9,1],[-70.0618,31.4613,120,10.3795,1.9,1],[-64.8721,31.4613,120,15.5693,1.9,1],[-72.6567,35.9557,30,5.9926,1.9,1],[-44.113,58.4281,60,5.1898,1.9,1],[-80.4414,31.4613,300,20.7591,1.9,1],[-67.4669,17.9779,120,20.7591,1.9,1]]
+## ... Kevin's latest autosave (format [x, z, heading, length, width, level]; its 1.9 m walls say the full-size cells)
+
+
+func _autosave_walls() -> void:
+	# the walls of Kevin's latest autosave load on the cells their widths name (full size) and merge: the three heading-120 walls a cell or two apart (and the
+	# 300-degree one laid the other way round beside them) become one thick wall; the rest are too far apart along their line, or at an angle
+	var g1 := CSGrid.new()
+	g1.generate(1, 0, CSGrid.KIND_DODECA, 1)
+	var base := CSWalls.thickness(g1)
+	var t := CSTown.new()
+	for e: Array in KEVIN_WALLS:
+		t.walls.append({"x": float(e[0]), "z": float(e[1]), "deg": float(e[2]), "len": float(e[3]), "w": float(e[4]), "c": int(e[5])})
+	var merges := CSWalls.settle(t, g1)
+	ok(t.walls.size() < KEVIN_WALLS.size() - 2 and merges == KEVIN_WALLS.size() - t.walls.size(), "Kevin's autosave: %d walls merge into %d (%d merges)" % [KEVIN_WALLS.size(), t.walls.size(), merges])
+	var near_120 := []
+	for w: Dictionary in t.walls:
+		if absf(float(w.x)) > 50.0 and posmod(roundi(float(w.deg)), 180) == 120:
+			near_120.append(w)
+	ok(near_120.size() == 1 and float(near_120[0].w) > 3.0 * base, "the walls at (-70, 31), (-65, 31), (-67, 18) and (-80, 31) are ONE wall now (%d, %.1f m thick)" % [near_120.size(), float(near_120[0].w) if near_120.size() > 0 else 0.0])
+	# every original wall lies inside one of the walls that remain: a merged wall is at least the union (as thick, as long)
+	var uncovered := 0
+	for e: Array in KEVIN_WALLS:
+		var o := {"x": float(e[0]), "z": float(e[1]), "deg": float(e[2]), "len": float(e[3]), "w": float(e[4])}
+		var found := false
+		for r: Dictionary in t.walls:
+			if _covers(r, o):
+				found = true
+		if not found:
+			uncovered += 1
+	ok(uncovered == 0, "every wall of the autosave lies inside a remaining wall (%d do not)" % uncovered)
+	var close := _unmerged_pairs(t.walls, base)
+	ok(close == 0, "no two parallel walls are left closer than the merge distance (%d pairs)" % close)
+	# the same walls, every length scaled with the cell: on 1/4 cells they merge the same way
+	var g4 := CSGrid.new()
+	g4.generate(1, 0, CSGrid.KIND_DODECA, 4)
+	var t4 := CSTown.new()
+	for e: Array in KEVIN_WALLS:
+		t4.walls.append({"x": float(e[0]) * g4.cell, "z": float(e[1]) * g4.cell, "deg": float(e[2]), "len": float(e[3]) * g4.cell, "w": float(e[4]) * g4.cell, "c": int(e[5])})
+	CSWalls.settle(t4, g4)
+	ok(t4.walls.size() == t.walls.size(), "scaled to 1/4 cells (%.2f m walls) the same walls merge the same way (%d walls)" % [CSWalls.thickness(g4), t4.walls.size()])
+	var b := _built(t)
+	_closed(b, "Kevin's autosave walls after the merge, built")
 
 
 func _joint_town(spec: Array) -> CSTown:
@@ -803,9 +932,9 @@ func _directions() -> void:
 
 
 func _cell_sizes() -> void:
-	# the cells at 1/2 and 1/3 of the area: the same island, more and smaller cells, every cell regular, the same rules
+	# the cells at 1/2, 1/4, 1/6 and 1/8 of the area: the same island, more and smaller cells, every cell regular, the same rules
 	var counts := {}
-	for d in [1, 2, 3, 4]:
+	for d: int in CSGrid.DIVS:
 		var g := CSGrid.new()
 		g.generate(1, 0, CSGrid.KIND_DODECA, d)
 		var n := 0
@@ -817,18 +946,25 @@ func _cell_sizes() -> void:
 				if poly.size() != 12 or absf(CFTri.area(poly) - CSGrid.BASE_AREA / float(d)) > 0.02 or not CSBuild.convex(poly):
 					bad += 1
 		counts[d] = n
-		ok(bad == 0 and g.div == d and absf(g.cell - 1.0 / sqrt(float(d))) < 1e-9, "12-sided cells at 1/%d of the area: %d cells of %.1f m2, %d wrong" % [d, n, CSGrid.BASE_AREA / float(d), bad])
+		ok(bad == 0 and g.div == d and absf(g.cell - 1.0 / sqrt(float(d))) < 1e-9, "12-sided cells at 1/%d of the area: %d cells of %.1f m2, side %.2f m, %d wrong" % [d, n, CSGrid.BASE_AREA / float(d), g.side, bad])
 		ok(CSGrid.div_of(CSGrid.id_of(CSGrid.KIND_DODECA, d)) == d and CSGrid.kind_of(CSGrid.id_of(CSGrid.KIND_DODECA, d)) == CSGrid.KIND_DODECA, "the tag of a town on 1/%d cells says so (%s)" % [d, CSGrid.id_of(CSGrid.KIND_DODECA, d)])
-	ok(counts[2] > 1.7 * counts[1] and counts[3] > 2.5 * counts[1], "an island of the same size has twice and three times the cells (%d, %d, %d)" % [counts[1], counts[2], counts[3]])
-	ok(CSGrid.variants()[0][1] == CSGrid.DEFAULT_DIV and CSTown.new().grid_div == CSGrid.DEFAULT_DIV and CSGrid.DEFAULT_DIV > 1, "a new town starts on the smaller cells")
+	ok(counts[2] > 1.7 * counts[1] and counts[4] > 3.4 * counts[1] and counts[8] > 6.8 * counts[1], "an island of the same size has twice, four and eight times the cells (%d, %d, %d, %d)" % [counts[1], counts[2], counts[4], counts[8]])
+	ok(CSGrid.variants()[0][1] == CSGrid.DEFAULT_DIV and CSTown.new().grid_div == CSGrid.DEFAULT_DIV and CSGrid.DEFAULT_DIV == 4, "a new town starts on cells of a quarter of the first area (about 5.4 m2, side 0.70 m)")
 	# a saved town remembers the cell size
 	var st := CSTown.new()
-	st.grid_div = 3
+	st.grid_div = 6
 	var back := CSTown.new()
 	back.from_dict(st.to_dict())
-	ok(back.grid_div == 3 and back.grid_kind == CSGrid.KIND_DODECA, "a town saves its cell size")
-	# the same rules on them: the castle starter and random castles are closed on 1/2 and 1/3 cells, 12-sided and hexagons
-	for kd: Array in [[CSGrid.KIND_DODECA, 2], [CSGrid.KIND_DODECA, 3], [CSGrid.KIND_HEX, 2]]:
+	ok(back.grid_div == 6 and back.grid_kind == CSGrid.KIND_DODECA, "a town saves its cell size")
+	# the sizes scale with the cell (SPEC 0b): a door, a window, a slit, the parapet, a crenel and the straight wall are a fixed fraction of the first size's
+	var g4 := CSGrid.new()
+	g4.generate(1, 0, CSGrid.KIND_DODECA, 4)
+	CSBuild.set_scale(g4.side, g4.cell)
+	ok(absf(CSBuild.FS - 0.5) < 0.01 and absf(CSBuild.PT - 0.15) < 0.01 and absf(CSBuild.WALL_THICK - 0.95) < 0.01 and absf(CSBuild.SLIT_HW - 0.04) < 0.005, "at 1/4 the sizes are half the first size's (FS %.2f, parapet %.2f m, wall %.2f m)" % [CSBuild.FS, CSBuild.PT, CSBuild.WALL_THICK])
+	CSBuild.set_scale(grid.side, grid.cell)
+	# the same rules on them: the castle starter and random castles are closed on the sizes of the ladder, 12-sided and hexagons. 1/2 and 1/4 (the default) must
+	# be closed in all; 1/6 and 1/8 are reported (their stress towns still have a few defects: SPEC 0b)
+	for kd: Array in [[CSGrid.KIND_DODECA, 4], [CSGrid.KIND_DODECA, 2], [CSGrid.KIND_HEX, 4], [CSGrid.KIND_HEX, 2]]:
 		var g := CSGrid.new()
 		g.generate(1, 0, kd[0], kd[1])
 		var t := CSTown.new()
@@ -839,14 +975,14 @@ func _cell_sizes() -> void:
 		b.build(g, t)
 		_closed(b, "the castle starter on %s (%d blocks)" % [CSGrid.variant_name(kd[0], kd[1]), t.size()])
 		var worst := 0
-		for sd in 4:
+		for sd in (8 if kd[0] == CSGrid.KIND_DODECA and kd[1] == 4 else 4):
 			var tr := CSTown.new()
 			CSStarter.random_growth(g, tr, sd, 40, -1 if sd % 2 == 1 else 0)
 			var br := CSBuild.new()
 			br.build(g, tr)
 			var au := CFAudit.check(br.mesh, SKIP)
 			worst = maxi(worst, int(au.open_other) + int(au.non_manifold) + int(au.flipped) + int(au.t_junctions))
-		ok(worst == 0, "four random castles on %s are closed (worst defects %d)" % [CSGrid.variant_name(kd[0], kd[1]), worst])
+		ok(worst == 0, "random castles on %s are closed (worst defects %d)" % [CSGrid.variant_name(kd[0], kd[1]), worst])
 		var tw := CSTown.new()
 		var c := g.nearest(Vector2.ZERO)
 		var stops := g.line_stops(g.verts[c], Vector2.from_angle(deg_to_rad(30.0)), 40.0)
@@ -855,6 +991,69 @@ func _cell_sizes() -> void:
 		var bw := CSBuild.new()
 		bw.build(g, tw)
 		_closed(bw, "two straight walls on %s (a wall %.2f m thick)" % [CSGrid.variant_name(kd[0], kd[1]), CSWalls.thickness(g)])
+	for d: int in [6, 8]:
+		var g := CSGrid.new()
+		g.generate(1, 0, CSGrid.KIND_DODECA, d)
+		var t := CSTown.new()
+		t.grid_div = d
+		CSStarter.make("tower", g, t)
+		var b := CSBuild.new()
+		b.build(g, t)
+		var au := CFAudit.check(b.mesh, SKIP)
+		var defects := int(au.open_other) + int(au.non_manifold) + int(au.flipped) + int(au.t_junctions)
+		ok(b.mesh.tri_count() > 500 and defects < 100, "the tower starter builds on 1/%d cells (%d tris, %d defects: the experimental steps)" % [d, b.mesh.tri_count(), defects])
+
+
+func _land_box() -> void:
+	## CSBuild._find_land floods only a box round the town (so a click costs the same on any size of cell): the same land as a flood over the whole island.
+	var g := CSGrid.new()
+	g.generate(1, 0, CSGrid.KIND_DODECA, 4)
+	var bad := 0
+	var courts := 0
+	for n in 5:
+		var t := CSTown.new()
+		if n == 0:
+			CSStarter.make("castle", g, t)
+		elif n == 1:
+			CSStarter.make("village", g, t)
+		else:
+			CSStarter.random_growth(g, t, n, 50, 0)
+		var b := CSBuild.new()
+		b.grid = g
+		b.town = t
+		b._find_land()
+		var nv := g.verts.size()
+		var sea := PackedByteArray()
+		sea.resize(nv)
+		var stack: Array[int] = []
+		for v in nv:
+			if not g.buildable(v) and g.is_dodecagon(v):
+				sea[v] = 1
+				stack.append(v)
+		while not stack.is_empty():
+			var v: int = stack.pop_back()
+			for u in g.nbrs[v]:
+				if sea[u] or t.has(u, 0) or b.top_of(u) >= 1:
+					continue
+				sea[u] = 1
+				stack.append(u)
+		var ref := {}
+		for v in nv:
+			if not g.buildable(v):
+				continue
+			if t.has(v, 0):
+				ref[v] = "base"
+			elif b.top_of(v) >= 1:
+				ref[v] = "passage"
+			elif not sea[v]:
+				ref[v] = "court"
+				courts += 1
+		if ref.size() != b.land.size():
+			bad += 1
+		for v: int in ref:
+			if b.land.get(v, "") != ref[v]:
+				bad += 1
+	ok(bad == 0 and courts > 100, "the land found in a box round the town is the land of a flood over the whole island, on the castle, the village and three random towns at 1/4 (%d courtyard cells, %d differ)" % [courts, bad])
 
 
 func _hex_grid() -> void:

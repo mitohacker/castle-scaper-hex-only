@@ -4,23 +4,35 @@ extends RefCounted
 ## for, and walls that lie side by side are merged into one thicker wall.
 ##
 ## A wall is a rectangle: an axis (a point, a heading, a length) and a width. Two walls MERGE when they are parallel (the same heading, or the opposite,
-## within CSWalls.PARALLEL_DEG), the gap between their strips is at most GAP_LAT_K wall thicknesses and the gap between their spans along the axis at
-## most GAP_AX_K thicknesses (they overlap, touch, or lie about one thickness apart side by side; or lie end to end on one line), and the merged wall is
-## not thicker than MAX_W_K thicknesses. The merged wall is the bounding rectangle of the two in their common direction: its width is the union of their
-## widths (two strips side by side make a wall about twice as thick, three three times), its length the union of their spans. Walls that meet or cross
-## at an angle are not merged: they stay two walls with one joined outline (CSBuild._walls). The merge runs when a wall is added and when a save loads.
+## within CSWalls.PARALLEL_DEG) and lie close enough, measured in CELL WIDTHS (W = the distance between the middles of two neighbouring cells, 5.19 m on the
+## full-size cells, so every number scales with the cell setting):
+##   side by side - the lines of two single walls are at most MERGE_LAT_K = 1.5 W apart (centre to centre; for a thick wall: the gap between the strips
+##                  at most 1.5 W less one wall thickness), so a wall dragged one cell, or two cells, beside another joins it;
+##   along the line - their spans overlap, or touch, or lie at most MERGE_AX_K = 1 W apart end to end; the nearer the strips (the smaller the side gap),
+##                  the larger the gap along the line that still counts: it falls linearly from 1 W (strips touching) to nothing (strips 1.5 W apart), so
+##                  two walls that only half overlap diagonally never make a huge empty slab;
+## and the merged wall is not wider than MAX_W_K = 3 W. The merged wall is the bounding rectangle of the two in their common direction: its width is the
+## union of their widths (two strips side by side make a wall about twice as thick, three three times), its length the union of their spans, its heading
+## the first wall's (so it stays on one of the wall directions). Walls that meet or cross at an angle are not merged: they stay two walls with one joined
+## outline (CSBuild._walls). The merge runs when a wall is added, in the drag preview (`with_new`) and when a save loads.
 
 const NEAR := 0.1              # a corner this close to another wall's side (and not on it) is a near miss the build cannot weld
 const NUDGE := 0.06            # ... the wall is built this much longer
 const PARALLEL_DEG := 0.6
-const GAP_LAT_K := 1.0          # side by side: strips closer than this many thicknesses (edge to edge) are one wall
-const GAP_AX_K := 0.5           # end to end: spans closer than this many thicknesses are one wall
-const MAX_W_K := 8.0            # the thickest merged wall, in thicknesses of a single wall (a rampart of up to 15 m on the full-size cells)
+const THICK := 1.9              # a single wall's width on the full-size cells (m); smaller cells scale it with the cell
+const MERGE_LAT_K := 1.5        # side by side: lines of two single walls at most this many cell widths apart
+const MERGE_AX_K := 1.0         # end to end: spans at most this many cell widths apart (when the strips touch)
+const MAX_W_K := 3.0            # the thickest merged wall, in cell widths (15.6 m on the full-size cells, 7.8 m on 1/4 cells)
+
+
+static func cell_width(base: float) -> float:
+	## The distance between two neighbouring cells' middles, from a single wall's thickness (both scale with the cell).
+	return base * CSGrid.D_SPACING / THICK
 
 
 static func thickness(grid: CSGrid) -> float:
 	## The width of a single wall on this grid (1.9 m on the full-size cells, thinner on smaller ones).
-	return 1.9 * grid.cell
+	return THICK * grid.cell
 
 
 static func dir_of(w: Dictionary) -> Vector2:
@@ -49,6 +61,11 @@ static func settle(town: CSTown, grid: CSGrid) -> int:
 
 
 static func merge(town: CSTown, base: float) -> int:
+	## Merge every pair of walls that lie together, the closest pair first, until none does. The number of merges made.
+	return merge_list(town.walls, base)
+
+
+static func merge_list(walls: Array, base: float) -> int:
 	var merges := 0
 	var guard := 0
 	while guard < 400:
@@ -57,10 +74,10 @@ static func merge(town: CSTown, base: float) -> int:
 		var bj := -1
 		var best := INF
 		var res := {}
-		var n := town.walls.size()
+		var n := walls.size()
 		for i in n:
 			for j in range(i + 1, n):
-				var r := try_merge(town.walls[i], town.walls[j], base)
+				var r := try_merge(walls[i], walls[j], base)
 				if not r.is_empty() and float(r.score) < best:
 					best = float(r.score)
 					bi = i
@@ -69,10 +86,29 @@ static func merge(town: CSTown, base: float) -> int:
 		if bi < 0:
 			break
 		res.erase("score")
-		town.walls[bi] = res
-		town.walls.remove_at(bj)
+		walls[bi] = res
+		walls.remove_at(bj)
 		merges += 1
 	return merges
+
+
+static func with_new(walls: Array, nw: Dictionary, base: float) -> Dictionary:
+	## What a wall about to be laid becomes beside the walls there are: {"wall": the wall it ends up as (the new wall itself when nothing merges),
+	## "absorbed": how many of the existing walls it joins}. The walls given are not touched; the drag preview draws "wall" and building it makes the same.
+	var list: Array = []
+	for w: Dictionary in walls:
+		list.append(w.duplicate())
+	var n := nw.duplicate()
+	n["_new"] = true
+	list.append(n)
+	var before := list.size()
+	merge_list(list, base)
+	var out := nw.duplicate()
+	for w: Dictionary in list:
+		if w.has("_new"):
+			out = w.duplicate()
+			out.erase("_new")
+	return {"wall": out, "absorbed": before - list.size()}
 
 
 static func try_merge(a: Dictionary, b: Dictionary, base: float) -> Dictionary:
@@ -93,18 +129,26 @@ static func try_merge(a: Dictionary, b: Dictionary, base: float) -> Dictionary:
 	var smax_b := maxf(sb0, sb1)
 	var ha := float(a.w) * 0.5
 	var hb := float(b.w) * 0.5
+	var width := cell_width(base)
 	var lat_gap := absf(lat) - (ha + hb)
 	var ax_gap := maxf(smin_b - la, -smax_b)
-	if lat_gap > GAP_LAT_K * base or ax_gap > GAP_AX_K * base:
+	var lat_max := MERGE_LAT_K * width - base + 1e-6
+	if lat_gap > lat_max:
+		return {}
+	var ax_max := MERGE_AX_K * width * (1.0 - clampf(maxf(lat_gap, 0.0) / lat_max, 0.0, 1.0))
+	if ax_gap > ax_max + 1e-6:
 		return {}
 	var lo := minf(-ha, lat - hb)
 	var hi := maxf(ha, lat + hb)
-	if hi - lo > MAX_W_K * base + 1e-6:
+	if hi - lo > MAX_W_K * width + 1e-6:
 		return {}
 	var smin := minf(0.0, smin_b)
 	var smax := maxf(la, smax_b)
 	var p0 := pa + ua * smin + na * ((lo + hi) * 0.5)
-	return {"x": p0.x, "z": p0.y, "deg": float(a.deg), "len": smax - smin, "w": hi - lo, "c": int(a.c) if la >= lb_len else int(b.c), "score": maxf(lat_gap, 0.0) + maxf(ax_gap, 0.0)}
+	var r := {"x": p0.x, "z": p0.y, "deg": float(a.deg), "len": smax - smin, "w": hi - lo, "c": int(a.c) if la >= lb_len else int(b.c), "score": maxf(lat_gap, 0.0) + maxf(ax_gap, 0.0)}
+	if a.has("_new") or b.has("_new"):
+		r["_new"] = true
+	return r
 
 
 static func robust(walls: Array) -> Array:

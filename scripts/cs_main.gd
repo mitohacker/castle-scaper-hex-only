@@ -87,7 +87,9 @@ var cells_armed_until := -1.0         # the Cells switch asks twice: the first p
 var straight_mode := false          # a drag lays a straight wall along a grid line (T, the Straight button; castle types only)
 var stroke_start := Vector2.ZERO    # a straight stroke: the middle of the cell it began on
 var stroke_deg := 0.0               # ... and the direction (degrees) the preview lies along
-var stroke_wall := {}               # ... and the wall it previews: {v: the cell, deg, len: metres} (empty: none yet)
+var stroke_wall := {}               # ... and the wall it previews: {x, z, deg, len, w, c} (empty: none yet)
+var stroke_merge := {}              # ... and what it becomes beside the walls there are (CSWalls.with_new): {wall, absorbed}; the preview draws "wall"
+var stroke_merge_key := ""
 var history := []
 var future := []
 var dirty := true
@@ -204,10 +206,10 @@ func _ready() -> void:
 	elif not fresh and not args.has("starter") and FileAccess.file_exists(AUTOSAVE):
 		loaded = town.load_json(AUTOSAVE)
 	if args.has("grid") or args.has("cell"):
-		# --cs-grid=hex|dodeca and --cs-cell=2 (1/2 of the area; 1, 2, 3 or 4): the cells to build on (a town saved on other cells does not fit)
+		# --cs-grid=hex|dodeca and --cs-cell=4 (1/4 of the area, the default; 1, 2, 4, 6 or 8): the cells to build on (a town saved on other cells does not fit)
 		var want_kind := str(args.get("grid", town.grid_kind))
 		want_kind = want_kind if want_kind in [CSGrid.KIND_HEX, CSGrid.KIND_LAYER, CSGrid.KIND_LAYER3] else CSGrid.KIND_DODECA
-		var want_div := clampi(CSGrid.parse_div(str(args.get("cell", str(town.grid_div)))), 1, 4)
+		var want_div := clampi(CSGrid.parse_div(str(args.get("cell", str(town.grid_div)))), 1, CSGrid.MAX_DIV)
 		if want_kind != town.grid_kind or want_div != town.grid_div:
 			town.clear()
 			town.grid_kind = want_kind
@@ -489,6 +491,7 @@ func add_wall(w: Dictionary) -> bool:
 	if float(w.len) < 1.0:
 		return false
 	var snap := {} if (stroke_committing and stroke_recorded) else town.to_dict()
+	var becomes := CSWalls.with_new(town.walls, w, CSWalls.thickness(grid))       # (what the drag preview showed)
 	if not town.wall_add(float(w.x), float(w.z), float(w.deg), float(w.len), float(w.w), int(w.c)):
 		flash("There is a wall there already")
 		return false
@@ -500,7 +503,7 @@ func add_wall(w: Dictionary) -> bool:
 		life.puff(Vector3(p.x, 0.2, p.y), true)
 	mark_changed()
 	if merged > 0:
-		flash("Wall built and merged into a thicker wall: Ctrl+Z takes it back")
+		flash("Wall built and merged with %d other%s into one wall %.1f m thick: Ctrl+Z takes it back" % [int(becomes.absorbed), "" if int(becomes.absorbed) == 1 else "s", float((becomes.wall as Dictionary).w)])
 	else:
 		flash("Wall built, %.1f m: Ctrl+Z takes it back" % float(w.len))
 	return true
@@ -1034,11 +1037,35 @@ func _inside_cell(v: int, pt: Vector2, margin: float) -> bool:
 	return true
 
 
+func _straight_status() -> String:
+	## The cue while a straight wall is dragged: the heading, the length, and when it lies against other walls what the release makes of them.
+	if not stroke_wall.has("len"):
+		return "Straight wall at %s deg (%d directions): drag further to lay it. Esc or the right button to cancel" % [deg_text(stroke_deg), town.wall_dirs]
+	var mg := _stroke_merged()
+	var absorbed := int(mg.get("absorbed", 0))
+	var tail := "Release to build it, Esc or the right button to cancel"
+	if absorbed > 0:
+		var mw: Dictionary = mg.wall
+		return "Straight wall at %s deg (%d directions), %.1f m long: joins %d wall%s into one %.1f m thick wall of %.1f m. %s" % [deg_text(stroke_deg), town.wall_dirs,
+			float(stroke_wall.len), absorbed, "" if absorbed == 1 else "s", float(mw.w), float(mw.len), tail]
+	return "Straight wall at %s deg (%d directions), %.1f m long. %s" % [deg_text(stroke_deg), town.wall_dirs, float(stroke_wall.len), tail]
+
+
+func _stroke_merged() -> Dictionary:
+	## What the wall being dragged becomes beside the walls there are (CSWalls.with_new), kept until the wall or the walls change.
+	var w := stroke_wall
+	var key := "%s|%s|%s|%s|%d" % [str(w.get("x")), str(w.get("z")), str(w.get("deg")), str(w.get("len")), town.walls.size()]
+	if key != stroke_merge_key:
+		stroke_merge_key = key
+		stroke_merge = CSWalls.with_new(town.walls, w, CSWalls.thickness(grid)) if w.has("len") else {}
+	return stroke_merge
+
+
 func _update_ghost() -> void:
 	if stroke_active:
 		ghost_mi.visible = false         # the stroke's preview shows the cell under the pointer too
 		if _straight_stroke():
-			status_msg = "Straight wall at %s deg (%d directions), %.1f m long. Release to build it, Esc or the right button to cancel" % [deg_text(stroke_deg), town.wall_dirs, float(stroke_wall.get("len", 0.0))] if not stroke_wall.is_empty() else "Straight wall at %s deg (%d directions): drag further to lay it. Esc or the right button to cancel" % [deg_text(stroke_deg), town.wall_dirs]
+			status_msg = _straight_status()
 		else:
 			status_msg = "Drag preview: %d to build. Release to build them, Esc or the right button to cancel" % stroke_cols.size()
 		status_t = 0.3
@@ -1493,7 +1520,8 @@ func _stroke_show() -> void:
 		if not stroke_wall.has("len"):
 			stroke_mi.visible = false
 			return
-		var wm := _prism(CSBuild.wall_poly(grid, stroke_wall), CSBuild.level_y_static(0) + 0.02, CSBuild.level_y_static(1) - 0.02, 0.0)
+		var shown: Dictionary = _stroke_merged().get("wall", stroke_wall)       # the wall it will be once built: merged with the walls it lies against
+		var wm := _prism(CSBuild.wall_poly(grid, shown), CSBuild.level_y_static(0) + 0.02, CSBuild.level_y_static(1) - 0.02, 0.0)
 		var m2 := ArrayMesh.new()
 		m2.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, wm.surface_get_arrays(0))
 		ghost_mat.albedo_color = Color(1, 1, 1, 0.38)
